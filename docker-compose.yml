@@ -40,5 +40,19 @@ services:
       DATABASE_URL: postgresql://admin:password@db:5432/wedding_db
       REDIS_URL: redis://redis:6379/0
 
+  worker:
+    build: ./backend
+    container_name: wedding_worker
+    command: celery -A app.worker.celery worker --loglevel=info
+    volumes:
+      - ./backend:/app
+      - ./storage:/storage
+    depends_on:
+      - db
+      - redis
+    environment:
+      DATABASE_URL: postgresql://admin:password@db:5432/wedding_db
+      REDIS_URL: redis://redis:6379/0
+
 volumes:
   postgres_data:
