@@ -56,5 +56,14 @@ services:
       DATABASE_URL: postgresql://admin:password@db:5432/wedding_db
       REDIS_URL: redis://redis:6379/0
 
+  frontend:
+    build: ./frontend
+    container_name: wedding_frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+
 volumes:
   postgres_data:
