@@ -1,6 +1,16 @@
-from pydantic import BaseModel
+from typing import List, Optional
 from datetime import datetime
-from typing import Optional
+from pydantic import BaseModel
+
+class PhotoBase(BaseModel):
+    file_path: str
+
+class Photo(PhotoBase):
+    photo_id: int
+    event_id: int
+
+    class Config:
+        orm_mode = True
 
 class EventBase(BaseModel):
     event_name: str
@@ -11,7 +21,6 @@ class EventCreate(EventBase):
 
 class Event(EventBase):
     event_id: int
-    created_at: datetime
 
     class Config:
-        from_attributes = True
+        orm_mode = True

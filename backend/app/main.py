@@ -8,7 +8,7 @@ import numpy as np
 from typing import List
 from celery import Celery
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request, Form
 from fastapi.staticfiles import StaticFiles
 from insightface.app import FaceAnalysis
 from sqlalchemy.orm import Session
@@ -73,7 +73,12 @@ def health_check(db: Session = Depends(database.get_db)):
     except Exception as e:
         return {"database": f"error: {str(e)}"}
 
-@app.post("/events/", response_model=schemas.Event)
+@app.get("/events", response_model=List[schemas.Event])
+def get_events(db: Session = Depends(database.get_db)):
+    events = db.query(models.Event).all()
+    return events
+
+@app.post("/events", response_model=schemas.Event)
 def create_event(event: schemas.EventCreate, db: Session = Depends(database.get_db)):
     try:
         db_event = models.Event(event_name=event.event_name, event_date=event.event_date)
@@ -83,6 +88,13 @@ def create_event(event: schemas.EventCreate, db: Session = Depends(database.get_
         return db_event
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+@app.get("/events/{event_id}", response_model=schemas.Event)
+def get_event(event_id: int, db: Session = Depends(database.get_db)):
+    event = db.query(models.Event).filter(models.Event.event_id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return event
 
 @app.post("/events/{event_id}/upload")
 def upload_photos(
@@ -138,8 +150,33 @@ def upload_photos(
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
+@app.get("/events/{event_id}/photos", response_model=List[schemas.Photo])
+def get_event_photos(event_id: int, db: Session = Depends(database.get_db)):
+    photos = db.query(models.Photo).filter(models.Photo.event_id == event_id).all()
+    return photos
+
+@app.delete("/photos/{photo_id}")
+def delete_photo(photo_id: int, db: Session = Depends(database.get_db)):
+    photo = db.query(models.Photo).filter(models.Photo.photo_id == photo_id).first()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    
+    try:
+        if os.path.exists(photo.file_path):
+            os.remove(photo.file_path)
+    except Exception as e:
+        logger.error(f"Error deleting file {photo.file_path}: {e}")
+        
+    db.delete(photo)
+    db.commit()
+    return {"message": "Photo deleted successfully"}
+
 @app.post("/search")
-def search_faces(file: UploadFile = File(...), db: Session = Depends(database.get_db)):
+def search_faces(
+    event_id: int = Form(...),
+    file: UploadFile = File(...), 
+    db: Session = Depends(database.get_db)
+):
     start_time = time.time()
     logger.info(f"Received search request for file: {file.filename}")
     
@@ -175,8 +212,13 @@ def search_faces(file: UploadFile = File(...), db: Session = Depends(database.ge
     debug_results = db.query(models.Face.embedding.cosine_distance(user_embedding)).order_by(models.Face.embedding.cosine_distance(user_embedding)).limit(5).all()
     logger.info(f"DEBUG: Top 5 distances found: {[r[0] for r in debug_results]}")
 
-    results = db.query(models.Photo).join(models.Face).filter(models.Face.embedding.cosine_distance(user_embedding) < 0.6).order_by(models.Face.embedding.cosine_distance(user_embedding)).limit(50).all()
-    
+    # Filter by Event ID and Cosine Distance
+    results = db.query(models.Photo).join(models.Face)\
+        .filter(models.Photo.event_id == event_id)\
+        .filter(models.Face.embedding.cosine_distance(user_embedding) < 0.6)\
+        .order_by(models.Face.embedding.cosine_distance(user_embedding))\
+        .limit(50).all()
+
     logger.info(f"Found {len(results)} matches. Total time: {time.time() - start_time:.2f}s")
     return {"matches": [photo.file_path for photo in results]}
 
