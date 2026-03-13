@@ -1,21 +1,30 @@
 import os
 import shutil
 import time
+import uuid
 import logging
 import cv2
 import numpy as np
 from typing import List
+from celery import Celery
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from insightface.app import FaceAnalysis
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from . import models, schemas, database, worker
+from . import models, schemas, database
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
 logger = logging.getLogger(__name__)
+
+# Initialize Celery Client (for sending tasks only, no model loading)
+celery_client = Celery(__name__, broker=os.getenv("REDIS_URL"), backend=os.getenv("REDIS_URL"))
 
 app = FastAPI(title="Wedding AI API")
 
@@ -75,9 +84,11 @@ def upload_photos(
     files: List[UploadFile] = File(...), 
     db: Session = Depends(database.get_db)
 ):
+    logger.info(f"Received upload request for event {event_id} with {len(files)} files.")
     # Verify event exists
     event = db.query(models.Event).filter(models.Event.event_id == event_id).first()
     if not event:
+        logger.error(f"Event {event_id} not found")
         raise HTTPException(status_code=404, detail="Event not found")
 
     storage_path = f"/storage/events/{event_id}/photos"
@@ -85,25 +96,41 @@ def upload_photos(
     
     saved_photos = []
     
-    for file in files:
-        file_location = f"{storage_path}/{file.filename}"
-        
-        # Save to disk
-        with open(file_location, "wb+") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+    try:
+        for file in files:
+            # Sanitize filename to prevent filesystem errors with special characters
+            original_name = file.filename or "upload"
+            safe_filename = "".join([c for c in original_name if c.isalpha() or c.isdigit() or c in (' ', '.', '_', '-')]).strip()
+            # If filename becomes empty after sanitization, give it a generic name
+            if not safe_filename:
+                safe_filename = f"image_{int(time.time())}_{uuid.uuid4().hex[:8]}.jpg"
             
-        # Save to DB
-        new_photo = models.Photo(event_id=event_id, file_path=file_location)
-        db.add(new_photo)
-        db.commit()
-        db.refresh(new_photo)
-        
-        # Queue for AI Processing (Phase 4)
-        worker.process_photo_task.delay(new_photo.photo_id, file_location)
-        
-        saved_photos.append(new_photo.photo_id)
-        
-    return {"message": "Upload successful", "photo_ids": saved_photos}
+            file_location = f"{storage_path}/{safe_filename}"
+            logger.info(f"Saving file to {file_location}")
+            
+            # Save to disk
+            # Revert to shutil.copyfileobj for better memory usage
+            # and ensure we are at the start of the file
+            file.file.seek(0)
+            with open(file_location, "wb+") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+                
+            # Save to DB
+            new_photo = models.Photo(event_id=event_id, file_path=file_location)
+            db.add(new_photo)
+            db.commit()
+            db.refresh(new_photo)
+            
+            # Queue for AI Processing (Phase 4)
+            celery_client.send_task("process_photo_task", args=[new_photo.photo_id, file_location])
+            
+            saved_photos.append(new_photo.photo_id)
+            
+        logger.info(f"Successfully uploaded {len(saved_photos)} photos.")
+        return {"message": "Upload successful", "photo_ids": saved_photos}
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @app.post("/search")
 def search_faces(file: UploadFile = File(...), db: Session = Depends(database.get_db)):

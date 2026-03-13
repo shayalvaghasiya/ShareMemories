@@ -10,6 +10,7 @@ export default function AdminPage() {
   const [uploadStatus, setUploadStatus] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState("");
+  const [progress, setProgress] = useState(0);
 
   // 1. Create Event
   const handleCreateEvent = async (e: React.FormEvent) => {
@@ -35,6 +36,7 @@ export default function AdminPage() {
     
     setIsUploading(true);
     setUploadStatus("Uploading...");
+    setProgress(0);
     setError("");
 
     const formData = new FormData();
@@ -47,9 +49,16 @@ export default function AdminPage() {
       // Direct upload to backend to bypass Next.js proxy body limits for large files
       // Use localhost:8000 which is exposed by Docker
       const res = await axios.post(`http://localhost:8000/events/${eventId}/upload`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+        onUploadProgress: (progressEvent) => {
+          // Calculate percentage safely
+          const total = progressEvent.total || progressEvent.loaded;
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / total);
+          setProgress(percentCompleted);
+        },
       });
       setUploadStatus(`Success! Uploaded ${res.data.photo_ids.length} photos.`);
+      // Ensure we hit 100% on success even if progress events lagged
+      setProgress(100);
     } catch (err: any) {
       console.error(err);
       setUploadStatus("Upload failed.");
@@ -130,12 +139,17 @@ export default function AdminPage() {
             </label>
             
             {isUploading && (
-              <div className="mt-4 flex items-center gap-2 text-indigo-600">
-                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span className="font-medium">{uploadStatus}</span>
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center gap-2 text-indigo-600">
+                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span className="font-medium">{uploadStatus} {progress}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                  <div className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${progress}%` }}></div>
+                </div>
               </div>
             )}
             {!isUploading && uploadStatus && (

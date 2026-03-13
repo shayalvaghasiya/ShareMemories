@@ -33,9 +33,7 @@ export default function Home() {
     try {
       // Post directly to the backend to bypass the Next.js proxy, which can time out
       // or have issues with file uploads.
-      const response = await axios.post("http://localhost:8000/search", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      const response = await axios.post("http://localhost:8000/search", formData);
       setResults(response.data.matches);
     } catch (error) {
       console.error("Search failed", error);
