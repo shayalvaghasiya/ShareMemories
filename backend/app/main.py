@@ -80,6 +80,7 @@ def get_events(db: Session = Depends(database.get_db)):
 
 @app.post("/events", response_model=schemas.Event)
 def create_event(event: schemas.EventCreate, db: Session = Depends(database.get_db)):
+    logger.info(f"Received create event request: {event.event_name}")
     try:
         db_event = models.Event(event_name=event.event_name, event_date=event.event_date)
         db.add(db_event)

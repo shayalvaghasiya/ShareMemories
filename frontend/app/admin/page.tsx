@@ -58,7 +58,8 @@ export default function AdminPage() {
     fetchEvents();
   }, [fetchEvents]);
 
-  const handleCreateEvent = async () => {
+  const handleCreateEvent = async (e: React.MouseEvent) => {
+    e.preventDefault();
     if (!newEventName.trim()) return;
     try {
       setStatusMessage("Creating event...");
@@ -226,6 +227,7 @@ export default function AdminPage() {
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   />
                   <button
+                    type="button"
                     onClick={handleCreateEvent}
                     className="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-indigo-700 transition-colors shadow-sm"
                   >
