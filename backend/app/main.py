@@ -1,12 +1,19 @@
 import os
 import shutil
+import cv2
+import numpy as np
 from typing import List
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from insightface.app import FaceAnalysis
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from . import models, schemas, database, worker
 
 app = FastAPI(title="Wedding AI API")
+
+# Initialize InsightFace model globally for search
+app_face = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
+app_face.prepare(ctx_id=0, det_size=(640, 640))
 
 # Create tables and enable vector extension on startup
 @app.on_event("startup")
@@ -75,3 +82,27 @@ async def upload_photos(
         saved_photos.append(new_photo.photo_id)
         
     return {"message": "Upload successful", "photo_ids": saved_photos}
+
+@app.post("/search")
+async def search_faces(file: UploadFile = File(...), db: Session = Depends(database.get_db)):
+    # Read image file from upload
+    contents = await file.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    # Detect face
+    faces = app_face.get(img)
+    if not faces:
+        raise HTTPException(status_code=400, detail="No face detected in uploaded photo")
+    
+    # Use the largest face found
+    faces.sort(key=lambda x: (x.bbox[2]-x.bbox[0]) * (x.bbox[3]-x.bbox[1]), reverse=True)
+    user_embedding = faces[0].embedding.tolist()
+
+    # Search using pgvector cosine distance
+    results = db.query(models.Photo).join(models.Face).filter(models.Face.embedding.cosine_distance(user_embedding) < 0.6).order_by(models.Face.embedding.cosine_distance(user_embedding)).limit(50).all()
+        
+    return {"matches": [photo.file_path for photo in results]}
