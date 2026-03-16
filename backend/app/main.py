@@ -42,9 +42,17 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     return response
 
-# Initialize InsightFace model globally for search
-app_face = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
-app_face.prepare(ctx_id=0, det_size=(640, 640))
+# Global variable for InsightFace model
+app_face = None
+
+def get_face_app():
+    global app_face
+    if app_face is None:
+        logger.info("Initializing InsightFace model (Lazy Load)...")
+        app_face = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
+        app_face.prepare(ctx_id=0, det_size=(640, 640))
+        logger.info("InsightFace model loaded successfully.")
+    return app_face
 
 # Mount storage to serve images statically for development
 app.mount("/storage", StaticFiles(directory="/storage"), name="storage")
@@ -195,7 +203,8 @@ def search_faces(
     logger.info("Starting face detection (Inference)...")
     # Detect face
     # Note: This is CPU intensive and might pause the server for 1-3 seconds
-    faces = app_face.get(img)
+    face_app = get_face_app()
+    faces = face_app.get(img)
     logger.info(f"Face detection finished in {time.time() - start_time:.2f}s. Found {len(faces)} faces.")
 
     if not faces:

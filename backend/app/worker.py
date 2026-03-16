@@ -28,6 +28,13 @@ def process_photo_task(photo_id: int, file_path: str):
         if img is None:
             return f"Error: Could not read image {file_path}"
 
+        # Downscale massive images before passing to InsightFace to save RAM
+        max_dimension = 1200
+        h, w = img.shape[:2]
+        if max(h, w) > max_dimension:
+            scale = max_dimension / max(h, w)
+            img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
         # Detect faces
         faces = app_face.get(img)
         
