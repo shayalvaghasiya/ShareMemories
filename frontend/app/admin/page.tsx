@@ -27,11 +27,7 @@ export default function AdminPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
 
-  // Dynamically get the API URL. 
-  // If running in browser, it points to the same IP serving the frontend, but on port 8000.
-  const apiUrl = typeof window !== "undefined" 
-    ? `${window.location.protocol}//${window.location.hostname}:8000` 
-    : "http://backend:8000";
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -88,28 +84,41 @@ export default function AdminPage() {
 
     setUploading(true);
     setUploadProgress(0);
-    setStatusMessage(`Uploading ${files.length} photos...`);
+    setStatusMessage(`Preparing to upload ${files.length} photos...`);
 
-    const formData = new FormData();
-    files.forEach(file => {
-      formData.append("files", file);
-    });
+    // Microsoft Dev Tunnels (Public URLs) reject large payloads (HTTP 413).
+    // We must break the files array into smaller batches to safely upload across the internet.
+    const BATCH_SIZE = 5; 
+    let uploadedCount = 0;
 
     try {
-      // Use the correct endpoint matching backend
-      await axios.post(`${apiUrl}/events/${getEventId(selectedEvent)}/upload`, formData, {
-        onUploadProgress: (progressEvent) => {
-          const total = progressEvent.total || progressEvent.loaded;
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / total);
-          setUploadProgress(percentCompleted);
-        },
-      });
-      setStatusMessage(`Successfully uploaded ${files.length} photos. They are now being indexed in the background.`);
+      for (let i = 0; i < files.length; i += BATCH_SIZE) {
+        const batch = files.slice(i, i + BATCH_SIZE);
+        const formData = new FormData();
+        batch.forEach(file => {
+          formData.append("files", file);
+        });
+
+        setStatusMessage(`Uploading batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(files.length / BATCH_SIZE)}...`);
+
+        await axios.post(`${apiUrl}/events/${getEventId(selectedEvent)}/upload`, formData, {
+          onUploadProgress: (progressEvent) => {
+            const batchProgress = progressEvent.total ? (progressEvent.loaded / progressEvent.total) : 0;
+            const totalPercent = Math.round(((uploadedCount + (batch.length * batchProgress)) / files.length) * 100);
+            setUploadProgress(totalPercent);
+          },
+        });
+
+        uploadedCount += batch.length;
+        setUploadProgress(Math.round((uploadedCount / files.length) * 100));
+      }
+
+      setStatusMessage(`Successfully uploaded all ${files.length} photos! They are now being indexed in the background.`);
       setFiles([]);
       fetchEventPhotos(getEventId(selectedEvent));
     } catch (error) {
       console.error("Upload failed", error);
-      setStatusMessage("Error: Upload failed. Please check the console.");
+      setStatusMessage(`Error: Upload stopped after ${uploadedCount} photos. Check the console.`);
     } finally {
       setUploading(false);
     }

@@ -26,11 +26,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  // Dynamically get the API URL. 
-  // If running in browser, it points to the same IP serving the frontend, but on port 8000.
-  const apiUrl = typeof window !== "undefined" 
-    ? `${window.location.protocol}//${window.location.hostname}:8000` 
-    : "http://backend:8000";
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
   useEffect(() => {
     if (typeof window === "undefined") return;
