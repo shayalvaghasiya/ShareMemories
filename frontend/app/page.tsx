@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSearchParams } from 'next/navigation';
 import axios from "axios";
 import Link from "next/link";
 
@@ -29,14 +28,14 @@ export default function Home() {
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-  const searchParams = useSearchParams();
-
   useEffect(() => {
-    const code = searchParams.get('eventCode');
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("eventCode");
     if (code) {
       setEventCode(code);
     }
-  }, [searchParams]);
+  }, []);
 
   // --- Login Handlers ---
 

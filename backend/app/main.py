@@ -55,7 +55,17 @@ def get_face_app():
     return app_face
 
 # Mount storage to serve images statically for development
-app.mount("/storage", StaticFiles(directory="/storage"), name="storage")
+# Use an overridable storage path so tests and non-container environments work
+storage_path = os.getenv("STORAGE_PATH", "/storage")
+if not os.path.exists(storage_path):
+    try:
+        os.makedirs(storage_path, exist_ok=True)
+    except PermissionError:
+        # Fall back to workspace-local storage if /storage isn't writable (e.g. unit tests)
+        storage_path = os.path.join(os.getcwd(), "storage")
+        os.makedirs(storage_path, exist_ok=True)
+
+app.mount("/storage", StaticFiles(directory=storage_path), name="storage")
 
 # Create tables and enable vector extension on startup
 @app.on_event("startup")

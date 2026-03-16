@@ -1,3 +1,4 @@
+import os
 import sys
 import pytest
 from unittest.mock import MagicMock
@@ -46,11 +47,12 @@ def client(mock_db_session):
     app.router.on_startup = []
 
     # Mock the global app_face used in main.py for search
-    # We attach it to the app instance for easy access in tests if needed, 
+    # We attach it to the app instance for easy access in tests if needed,
     # or we can patch it in specific tests.
-    from app.main import app_face
-    app_face.prepare = MagicMock()
-    app_face.get = MagicMock(return_value=[])
+    import app.main as app_main
+    app_main.app_face = MagicMock()
+    app_main.app_face.prepare = MagicMock()
+    app_main.app_face.get = MagicMock(return_value=[])
 
     with TestClient(app) as c:
         yield c

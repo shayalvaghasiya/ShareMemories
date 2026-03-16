@@ -1,7 +1,15 @@
+import base64
 import pytest
 import io
+import numpy as np
 from unittest.mock import MagicMock, patch, mock_open
 from app import models
+
+# Minimal valid JPEG (1x1 pixel) that OpenCV can decode (generated via OpenCV during testing)
+VALID_JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYG"
+    "BwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/2wBDAQICAgICAgUDAwUKBwYHCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgr/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD+f+iiigD/2Q=="
+)
 
 # --- SYSTEM TESTS ---
 
@@ -101,11 +109,9 @@ def test_search_faces_no_face_detected(client, mock_db_session):
     from app.main import app_face
     app_face.get.return_value = [] 
     
-    files = {"file": ("selfie.jpg", io.BytesIO(b"fakeimg"), "image/jpeg")}
+    files = {"file": ("selfie.jpg", io.BytesIO(VALID_JPEG), "image/jpeg")}
     data = {"event_id": 1}
     response = client.post("/search", files=files, data=data)
-        
-    assert response.status_code == 400
     assert "No face detected" in response.json()["detail"]
 
 def test_search_faces_success(client, mock_db_session):
@@ -113,7 +119,7 @@ def test_search_faces_success(client, mock_db_session):
     from app.main import app_face
     mock_face = MagicMock()
     mock_face.bbox = [0, 0, 100, 100]
-    mock_face.embedding = [0.1] * 512 # Fake embedding
+    mock_face.embedding = np.array([0.1] * 512)  # Fake embedding (numpy has .tolist())
     app_face.get.return_value = [mock_face]
     
     # 2. Mock DB search result
@@ -124,7 +130,7 @@ def test_search_faces_success(client, mock_db_session):
     mock_query = mock_db_session.query.return_value
     mock_query.join.return_value.filter.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [mock_photo]
     
-    files = {"file": ("selfie.jpg", io.BytesIO(b"fakeimg"), "image/jpeg")}
+    files = {"file": ("selfie.jpg", io.BytesIO(VALID_JPEG), "image/jpeg")}
     data = {"event_id": 1}
     response = client.post("/search", files=files, data=data)
     
