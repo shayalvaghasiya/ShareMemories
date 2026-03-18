@@ -9,7 +9,7 @@ type ViewState = "login" | "search" | "results";
 export default function Home() {
   // App State
   const [view, setView] = useState<ViewState>("login");
-  
+
   // Login State
   const [eventCode, setEventCode] = useState("");
   const [checkingEvent, setCheckingEvent] = useState(false);
@@ -17,15 +17,18 @@ export default function Home() {
   // Search State
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  
+
   // Results State
   const [results, setResults] = useState<any[]>([]);
-  const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
-  const [isSelectAll, setIsSelectAll] = useState(false);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [searchError, setSearchError] = useState<string | null>(null);
 
+  // Selection State
+  const [selectedPhotos, setSelectedPhotos] = useState<Set<number>>(new Set());
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   useEffect(() => {
@@ -38,13 +41,8 @@ export default function Home() {
     }
   }, []);
 
-  useEffect(() => {
-    setSelectedPhotos([]);
-    setIsSelectAll(false);
-  }, [results]);
-
   // --- Login Handlers ---
-  
+
   const validateAndEnter = async (code: string) => {
     setCheckingEvent(true);
     try {
@@ -74,44 +72,44 @@ export default function Home() {
     }
   };
 
-  const handleSelectPhoto = (photoUrl: string) => {
-    setSelectedPhotos(prev => 
-      prev.includes(photoUrl) ? prev.filter(p => p !== photoUrl) : [...prev, photoUrl]
-    );
-  };
+  // Download Multiple Photos Function
+  const downloadPhotos = async (photosToDownload: any[]) => {
+    if (photosToDownload.length === 0) return;
+    
+    setIsDownloading(true);
+    setDownloadProgress({ current: 0, total: photosToDownload.length });
+    
+    try {
+      for (let i = 0; i < photosToDownload.length; i++) {
+        const photo = photosToDownload[i];
+        setDownloadProgress({ current: i + 1, total: photosToDownload.length });
+        
+        try {
+          const a = document.createElement("a");
+          a.style.display = "none";
+          a.href = `${apiUrl}${photo.download_url}`;
+          a.download = `photo_${photo.photo_id}.jpg`;
+          a.target = "_blank"; // Added to help some browsers distinguish consecutive triggers
+          document.body.appendChild(a);
+          a.click();
 
-  const handleSelectAll = () => {
-    if (isSelectAll) {
-      setSelectedPhotos([]);
-    } else {
-      setSelectedPhotos(results.map(p => `${apiUrl}${p.download_url}`));
+          // Keep in DOM longer to ensure the action is processed
+          setTimeout(() => {
+            if (document.body.contains(a)) document.body.removeChild(a);
+          }, 3000);
+          
+          // Increased delay to 1200ms to be more browser-friendly
+          await new Promise(resolve => setTimeout(resolve, 1200));
+        } catch (error) {
+          console.error("Failed to initiate download for photo", photo.photo_id, error);
+        }
+      }
+    } finally {
+      // Small delay after last one before resetting UI
+      await new Promise(resolve => setTimeout(resolve, 800));
+      setIsDownloading(false);
+      setDownloadProgress({ current: 0, total: 0 });
     }
-    setIsSelectAll(!isSelectAll);
-  };
-
-  const handleDownloadSelected = async () => {
-    if (selectedPhotos.length === 0) return;
-
-    alert("Downloading selected photos. This may take a moment.");
-
-    // try {
-    //   const zip = new JSZip();
-    //   const promises = selectedPhotos.map(async (url) => {
-    //     const response = await axios.get(url, { responseType: 'blob' });
-    //     const filename = url.split('/').pop() || 'photo.jpg';
-    //     zip.file(filename, response.data);
-    //   });
-
-    //   await Promise.all(promises);
-
-    //   zip.generateAsync({ type: 'blob' }).then(content => {
-    //     saveAs(content, `ShareMemories_${new Date().toISOString().slice(0,10)}.zip`);
-    //   });
-
-    // } catch (error) {
-    //   console.error("Failed to download photos", error);
-    //   alert("Failed to download photos. Please try again.");
-    // }
   };
 
 
@@ -132,7 +130,9 @@ export default function Home() {
     setResults([]);
     setProgress(0);
     setSearchError(null);
-    
+    setSelectedPhotos(new Set());
+    setIsSelectMode(false);
+
     const formData = new FormData();
     formData.append("file", selectedFile);
     formData.append("event_id", eventCode);
@@ -171,13 +171,13 @@ export default function Home() {
           {view !== "login" && (
             <div className="flex items-center gap-4">
               <span className="text-sm font-medium text-slate-600 hidden sm:block">Event: {eventCode}</span>
-              <button 
-                onClick={() => { 
-                  setView("login"); 
-                  window.history.pushState({}, '', '/'); 
-                }} 
+              <button
+                onClick={() => {
+                  setView("login");
+                  window.history.pushState({}, '', '/');
+                }}
                 className="text-sm text-red-500 hover:bg-red-50 px-3 py-1 rounded-full transition-colors"
-               >
+              >
                 Leave Event
               </button>
             </div>
@@ -191,21 +191,21 @@ export default function Home() {
         {view === "login" && (
           <div className="max-w-md mx-auto bg-white rounded-2xl shadow-xl border border-slate-100 p-8 animate-fade-in">
             <h2 className="text-2xl font-semibold mb-6 text-center">Join Event</h2>
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Event Code</label>
-                <input 
-                  type="text" 
-                  value={eventCode} 
-                  onChange={(e) => setEventCode(e.target.value)} 
-                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                <input
+                  type="text"
+                  value={eventCode}
+                  onChange={(e: any) => setEventCode(e.target.value)}
+                  onKeyDown={(e: any) => e.key === 'Enter' && handleLogin()}
                   placeholder="e.g. WED2024"
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 />
               </div>
 
-              <button 
+              <button
                 onClick={handleLogin}
                 disabled={checkingEvent}
                 className="w-full bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 disabled:opacity-70 disabled:cursor-not-allowed"
@@ -221,9 +221,9 @@ export default function Home() {
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center animate-fade-in">
             <h2 className="text-xl font-medium mb-2">Find your photos</h2>
             <p className="text-slate-500 mb-8">Upload a clear selfie to find every photo you appeared in.</p>
-            
+
             <div className="flex flex-col items-center gap-6">
-              
+
               {/* Preview or Webcam Area */}
               <div className="relative w-64 h-64 md:w-80 md:h-80 rounded-2xl overflow-hidden bg-slate-900 shadow-inner">
                 {preview ? (
@@ -234,7 +234,7 @@ export default function Home() {
                   </div>
                 )}
               </div>
-            
+
               {/* Error Alert */}
               {searchError && (
                 <div className="w-full max-w-sm mb-4 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -257,7 +257,7 @@ export default function Home() {
 
               {/* Controls */}
               <div className="flex flex-col gap-3 w-full max-w-xs">
-                
+
                 {selectedFile ? (
                   <div className="flex gap-2">
                     <label className="flex-1 cursor-pointer bg-white border border-slate-300 text-slate-700 px-4 py-3 rounded-xl hover:bg-slate-50 font-semibold text-center">
@@ -291,45 +291,124 @@ export default function Home() {
         {/* VIEW: RESULTS */}
         {view === "results" && (
           <div className="animate-fade-in">
-            <div className="flex justify-between items-end mb-6">
-              <div>
-                <h2 className="text-xl font-semibold text-slate-900">Your Memories</h2>
-                <p className="text-sm text-slate-500">Found {results.length} photos matching you</p>
-              </div>
-              <button onClick={() => setView("search")} className="text-sm text-indigo-600 hover:underline">
+            {/* Header Info & New Search */}
+            <div className="flex flex-col items-center text-center mb-10 gap-4">
+              <button 
+                onClick={() => setView("search")} 
+                className="group flex items-center gap-2 text-sm font-semibold text-indigo-600 bg-indigo-50 px-5 py-2.5 rounded-full hover:bg-indigo-100 active:scale-95 transition-all shadow-sm"
+              >
+                <svg className="w-4 h-4 transform group-hover:-translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
                 Try another selfie
               </button>
+              
+              <div className="mt-2">
+                <h2 className="text-3xl font-bold text-slate-900 tracking-tight">Your Memories</h2>
+                <p className="text-slate-500 mt-1 font-medium">We found {results.length} photos you appeared in</p>
+              </div>
             </div>
 
             {results.length > 0 && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 mb-6">
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-4">
-                    <div className="flex items-center">
-                      <input
-                        type="checkbox"
-                        id="selectAll"
-                        checked={isSelectAll}
-                        onChange={handleSelectAll}
-                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <label htmlFor="selectAll" className="ml-2 block text-sm text-gray-900">
-                        Select All
-                      </label>
+              <div className="flex flex-col items-center w-full max-w-2xl mx-auto px-4 mb-12">
+                {isDownloading && downloadProgress.total > 1 && (
+                  <div className="w-full mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3 shadow-sm animate-in fade-in slide-in-from-top-4 duration-500">
+                    <svg className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    <div className="text-sm text-amber-800 leading-relaxed">
+                      <p className="font-bold mb-0.5">Downloading Multiple Photos...</p>
+                      <p className="opacity-90">If it stops, please check your browser address bar for a "Blocked" icon and select <strong>"Always allow multiple downloads"</strong>.</p>
                     </div>
-                    <p className="text-sm text-slate-500">{selectedPhotos.length} photos selected</p>
+                  </div>
+                )}
+                
+                <div className="inline-flex items-center bg-white p-2 rounded-2xl shadow-xl border border-slate-100 animate-in slide-in-from-bottom-4 duration-500">
+                  {isSelectMode ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          if (selectedPhotos.size === results.length) {
+                            setSelectedPhotos(new Set());
+                          } else {
+                            setSelectedPhotos(new Set(results.map((p: any) => p.photo_id)));
+                          }
+                        }}
+                        className="text-sm font-bold text-slate-600 hover:text-indigo-600 px-4 py-2 rounded-xl transition-colors active:scale-95"
+                      >
+                        {selectedPhotos.size === results.length ? "Deselect All" : "Select All"}
+                      </button>
+                      
+                      <div className="w-px h-6 bg-slate-200 mx-1" />
+                      
+                      <button
+                        onClick={() => {
+                          const photosToDownload = results.filter((p: any) => selectedPhotos.has(p.photo_id));
+                          downloadPhotos(photosToDownload);
+                        }}
+                        disabled={selectedPhotos.size === 0 || isDownloading}
+                        className="bg-indigo-600 text-white text-sm font-bold px-6 py-2.5 rounded-xl hover:bg-indigo-700 active:scale-95 disabled:opacity-50 transition-all shadow-lg shadow-indigo-200 flex items-center gap-2"
+                      >
+                        {isDownloading ? (
+                          <>
+                            <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            {downloadProgress.total > 1 ? `Downloading ${downloadProgress.current} / ${downloadProgress.total}` : "Downloading..."}
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            Download Selected ({selectedPhotos.size})
+                          </>
+                        )}
+                      </button>
+                      
+                      <button
+                        onClick={() => {
+                          setIsSelectMode(false);
+                          setSelectedPhotos(new Set());
+                        }}
+                        className="text-sm font-bold text-slate-400 hover:text-red-500 px-4 py-2 rounded-xl transition-colors active:scale-95"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setIsSelectMode(true)}
+                        className="text-sm font-bold text-slate-600 hover:text-indigo-600 px-5 py-2.5 rounded-xl transition-colors flex items-center gap-2 active:scale-95"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                        Select Photos
+                      </button>
+                      
+                      <div className="w-px h-6 bg-slate-200 mx-1" />
+                      
+                      <button
+                        onClick={() => downloadPhotos(results)}
+                        disabled={isDownloading}
+                        className="text-sm font-bold text-white bg-indigo-600 px-6 py-2.5 rounded-xl hover:bg-indigo-700 active:scale-95 transition-all flex items-center gap-2 shadow-lg shadow-indigo-100"
+                      >
+                        {isDownloading ? (
+                          <>
+                            <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            {downloadProgress.total > 1 ? `Downloading ${downloadProgress.current} / ${downloadProgress.total}` : "Downloading..."}
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                            Download All
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <button
-                  onClick={handleDownloadSelected}
-                  disabled={selectedPhotos.length === 0}
-                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-indigo-700 disabled:bg-slate-300 transition-colors"
-                >
-                  Download Selected
-                </button>
               </div>
-            </div>
             )}
-            
+
             {results.length === 0 ? (
               <div className="text-center py-20 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
                 <p className="text-slate-400">No matches found. Try a clearer selfie with good lighting.</p>
@@ -337,34 +416,57 @@ export default function Home() {
             ) : (
               /* Masonry Grid using CSS columns */
               <div className="columns-2 md:columns-3 gap-4 space-y-4">
-                {results.map((photo, idx) => (
-                  <div key={idx} className="break-inside-avoid relative group overflow-hidden rounded-xl shadow-md hover:shadow-xl transition-all duration-300">
-                    <img
-                      src={`${apiUrl}${photo.url}`}
-                      alt={`Match ${idx}`}
-                      className="w-full h-auto object-cover transform transition duration-700 group-hover:scale-105"
-                      loading="lazy"
-                    />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
-                    <a 
-                      href={`${apiUrl}${photo.download_url}`}
-                      target="_blank" 
-                      download
-                      className="absolute bottom-3 right-3 bg-white/90 p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity text-slate-800 hover:text-indigo-600 shadow-sm"
-                      title="Download"
+                {results.map((photo, idx) => {
+                  const isSelected = selectedPhotos.has(photo.photo_id);
+                  return (
+                    <div
+                      key={idx}
+                      className={`break-inside-avoid relative group overflow-hidden rounded-2xl shadow-sm transition-all duration-300 ${isSelectMode ? 'cursor-pointer' : ''} ${isSelected ? 'ring-4 ring-indigo-500 shadow-indigo-200' : 'hover:shadow-2xl hover:-translate-y-1'}`}
+                      onClick={() => {
+                        if (isSelectMode) {
+                          const newSet = new Set(selectedPhotos);
+                          if (isSelected) {
+                            newSet.delete(photo.photo_id);
+                          } else {
+                            newSet.add(photo.photo_id);
+                          }
+                          setSelectedPhotos(newSet);
+                        }
+                      }}
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                    </a>
-                    <div className="absolute top-3 left-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedPhotos.includes(`${apiUrl}${photo.download_url}`)}
-                        onChange={() => handleSelectPhoto(`${apiUrl}${photo.download_url}`)}
-                        className="h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      <img
+                        src={`${apiUrl}${photo.url}`}
+                        alt={`Match ${idx}`}
+                        className={`w-full h-auto object-cover transform transition duration-700 ${!isSelectMode && 'group-hover:scale-105'} ${isSelected ? 'opacity-90' : ''}`}
+                        loading="lazy"
                       />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors pointer-events-none" />
+
+                      {isSelectMode ? (
+                        <div className="absolute top-4 right-4">
+                          <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${isSelected ? 'bg-indigo-600 border-indigo-600 scale-110 shadow-lg' : 'border-white bg-black/20 backdrop-blur-sm shadow-sm'}`}>
+                            {isSelected && (
+                              <svg className="w-5 h-5 text-white animate-in zoom-in duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={(e: any) => {
+                            e.stopPropagation();
+                            downloadPhotos([photo]);
+                          }}
+                          className="absolute bottom-4 right-4 bg-white/95 backdrop-blur-md p-3 rounded-full opacity-0 group-hover:opacity-100 transform translate-y-4 group-hover:translate-y-0 active:scale-95 transition-all text-slate-800 hover:text-indigo-600 shadow-xl border border-slate-100"
+                          title="Download"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        </button>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

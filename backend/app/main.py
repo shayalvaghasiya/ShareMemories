@@ -13,7 +13,7 @@ from celery import Celery
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request, Form, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from insightface.app import FaceAnalysis
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -48,10 +48,11 @@ app = FastAPI(title="Wedding AI API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://scored-periodically-painting-bet.trycloudflare.com", "http://localhost:3000"], 
+    allow_origins=["https://keep-frankfurt-occurrence-mit.trycloudflare.com", "http://localhost:3000"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 try:
@@ -185,6 +186,8 @@ def process_drive_sync(event_id: int, files: list):
         logger.info(f"Starting background sync for {len(files)} files.")
         token = get_drive_token()
         headers = {"Authorization": f"Bearer {token}"}
+        
+        # Ensure base directories exist
         storage_path = f"/storage/events/{event_id}/thumbnails"
         os.makedirs(storage_path, exist_ok=True)
         
@@ -200,11 +203,13 @@ def process_drive_sync(event_id: int, files: list):
                     dl_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
                     dl_res = requests.get(dl_url, headers=headers)
                     if dl_res.status_code != 200:
+                        logger.error(f"Failed to download {file_id}: {dl_res.status_code}")
                         continue
                         
                     nparr = np.frombuffer(dl_res.content, np.uint8)
                     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                     if img is None:
+                        logger.error(f"Failed to decode image {file_id}")
                         continue
                         
                     # Resize for thumbnail
@@ -244,6 +249,66 @@ def process_drive_sync(event_id: int, files: list):
         db.close()
         logger.info("Background sync completed.")
 
+def repair_missing_photos():
+    """Background task to re-download missing photos that have drive_file_id"""
+    db: Session = database.SessionLocal()
+    try:
+        logger.info("Starting background repair for missing Google Drive photos.")
+        # Find all photos that have a drive_file_id
+        all_drive_photos = db.query(models.Photo).filter(models.Photo.drive_file_id != None).all()
+        
+        missing_photos = []
+        for p in all_drive_photos:
+            # Check if the local file exists (inside /storage)
+            full_path = p.file_path if p.file_path.startswith("/storage") else f"/storage/{p.file_path.lstrip('/')}"
+            if not os.path.exists(full_path):
+                missing_photos.append((p, full_path))
+                
+        if not missing_photos:
+            logger.info("No missing photos found to repair.")
+            return
+
+        logger.info(f"Found {len(missing_photos)} missing photos to recover from Google Drive.")
+        token = get_drive_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        for p, full_path in missing_photos:
+            try:
+                # Ensure directory exists
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                
+                # Download
+                dl_url = f"https://www.googleapis.com/drive/v3/files/{p.drive_file_id}?alt=media"
+                dl_res = requests.get(dl_url, headers=headers)
+                if dl_res.status_code == 200:
+                    nparr = np.frombuffer(dl_res.content, np.uint8)
+                    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        # Resize for thumbnail
+                        height, width = img.shape[:2]
+                        max_dim = 600
+                        if max(height, width) > max_dim:
+                            scale = max_dim / max(height, width)
+                            img = cv2.resize(img, (int(width * scale), int(height * scale)))
+                        
+                        # Re-save thumbnail
+                        cv2.imwrite(full_path, img)
+                        logger.info(f"Successfully recovered {p.photo_id} from Drive.")
+                        
+                        # Only re-trigger processing if the status wasn't completed in the backup
+                        if p.processing_status != "completed":
+                            celery_client.send_task("process_photo_task", args=[p.photo_id, full_path])
+                else:
+                    logger.warning(f"Failed to recover {p.photo_id} (ID: {p.drive_file_id}): {dl_res.status_code}")
+            except Exception as e:
+                logger.error(f"Error repairing photo {p.photo_id}: {e}")
+                
+    except Exception as e:
+        logger.error(f"Fatal error in photo repair: {e}")
+    finally:
+        db.close()
+        logger.info("Background repair completed.")
+
 @app.post("/events/{event_id}/sync-drive")
 def sync_drive_folder(
     event_id: int, 
@@ -270,13 +335,24 @@ def sync_drive_folder(
     headers = {"Authorization": f"Bearer {token}"}
     
     query = f"'{folder_id}' in parents and mimeType contains 'image/' and trashed = false"
-    url = f"https://www.googleapis.com/drive/v3/files?q={requests.utils.quote(query)}&fields=files(id,name,mimeType)"
     
-    res = requests.get(url, headers=headers)
-    if res.status_code != 200:
-        raise HTTPException(status_code=400, detail=f"Failed to access Google Drive folder: {res.text}")
-        
-    files = res.json().get('files', [])
+    files = []
+    page_token = None
+    while True:
+        url = f"https://www.googleapis.com/drive/v3/files?q={requests.utils.quote(query)}&fields=nextPageToken,files(id,name,mimeType)&pageSize=1000"
+        if page_token:
+            url += f"&pageToken={page_token}"
+            
+        res = requests.get(url, headers=headers)
+        if res.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Failed to access Google Drive folder: {res.text}")
+            
+        data = res.json()
+        files.extend(data.get('files', []))
+        page_token = data.get('nextPageToken')
+        if not page_token:
+            break
+            
     if not files:
         return {"message": "No images found in the folder.", "synced_count": 0, "total_found": 0, "new_found": 0}
 
@@ -295,22 +371,33 @@ def sync_drive_folder(
 @app.get("/photos/{photo_id}/download")
 def download_photo(photo_id: int, db: Session = Depends(database.get_db)):
     photo = db.query(models.Photo).filter(models.Photo.photo_id == photo_id).first()
-    if not photo or not photo.drive_file_id:
+    if not photo:
         raise HTTPException(status_code=404, detail="Photo not found")
         
-    token = get_drive_token()
-    headers = {"Authorization": f"Bearer {token}"}
-    dl_url = f"https://www.googleapis.com/drive/v3/files/{photo.drive_file_id}?alt=media"
-    
-    res = requests.get(dl_url, headers=headers, stream=True)
-    if res.status_code != 200:
-        raise HTTPException(status_code=res.status_code, detail="Failed to fetch from Google Drive")
+    if photo.drive_file_id:
+        token = get_drive_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        dl_url = f"https://www.googleapis.com/drive/v3/files/{photo.drive_file_id}?alt=media"
         
-    return StreamingResponse(
-        res.iter_content(chunk_size=1024*1024), 
-        media_type=res.headers.get("Content-Type", "image/jpeg"),
-        headers={"Content-Disposition": f"attachment; filename=photo_{photo_id}.jpg"}
-    )
+        res = requests.get(dl_url, headers=headers, stream=True)
+        if res.status_code != 200:
+            raise HTTPException(status_code=res.status_code, detail="Failed to fetch from Google Drive")
+            
+        return StreamingResponse(
+            res.iter_content(chunk_size=1024*1024), 
+            media_type=res.headers.get("Content-Type", "image/jpeg"),
+            headers={"Content-Disposition": f'attachment; filename="photo_{photo_id}.jpg"'}
+        )
+    elif photo.file_path:
+        actual_path = photo.file_path if photo.file_path.startswith("/") else f"/storage/{photo.file_path}"
+        if os.path.exists(actual_path):
+            return FileResponse(
+                path=actual_path,
+                media_type="image/jpeg",
+                filename=f"photo_{photo_id}.jpg"
+            )
+            
+    raise HTTPException(status_code=404, detail="File not found on server")
 
 @app.post("/events/{event_id}/upload")
 def upload_photos(
@@ -638,7 +725,10 @@ async def import_database(file: UploadFile = File(...), db: Session = Depends(da
         db.execute(text("SELECT setval('faces_face_id_seq', COALESCE((SELECT MAX(face_id) FROM faces), 0) + 1, false)"))
         db.commit()
 
-        msg = f"Imported {events_count} events, {photos_count} photos, {faces_count} faces."
+        # Auto-trigger repair background task
+        background_tasks.add_task(repair_missing_photos)
+
+        msg = f"Imported {events_count} events, {photos_count} photos, {faces_count} faces. Background recovery started for missing files."
         logger.info(msg)
         return ImportResult(
             events_imported=events_count,

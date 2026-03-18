@@ -55,6 +55,8 @@ export default function AdminPage() {
   const [dbPhotos, setDbPhotos] = useState<DbPhoto[]>([]);
   const [dbLoading, setDbLoading] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [reseting, setReseting] = useState(false);
   const [importMessage, setImportMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -213,6 +215,7 @@ export default function AdminPage() {
   const handleReset = async () => {
     if (window.confirm("Are you sure you want to reset all data? This cannot be undone.")) {
       try {
+        setReseting(true);
         setStatusMessage("Resetting database...");
         await axios.delete(`${apiUrl}/reset`);
         setStatusMessage("Database has been reset.");
@@ -223,12 +226,15 @@ export default function AdminPage() {
       } catch (error) {
         console.error("Reset failed", error);
         setStatusMessage("Error: Failed to reset database.");
+      } finally {
+        setReseting(false);
       }
     }
   };
 
   const handleExportDb = async () => {
     try {
+      setExporting(true);
       const response = await axios.get(`${apiUrl}/admin/db-export`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
@@ -238,11 +244,13 @@ export default function AdminPage() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-      setImportMessage("Database exported successfully!");
+      setImportMessage("✅ Database exported successfully!");
       setTimeout(() => setImportMessage(""), 3000);
     } catch (error) {
       console.error("Export failed", error);
-      setImportMessage("Error: Failed to export database.");
+      setImportMessage("❌ Error: Failed to export database.");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -421,9 +429,20 @@ export default function AdminPage() {
                   <h2 className="text-lg font-semibold mb-4 text-red-600">Danger Zone</h2>
                   <button
                     onClick={handleReset}
-                    className="w-full bg-red-50 text-red-600 border border-red-200 px-4 py-2 rounded-lg font-semibold hover:bg-red-100 hover:border-red-300 transition-colors"
+                    disabled={reseting}
+                    className="w-full bg-red-50 text-red-600 border border-red-200 px-4 py-2.5 rounded-lg font-semibold hover:bg-red-100 hover:border-red-300 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                   >
-                    Reset All Data
+                    {reseting ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4 text-red-600" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Resetting...
+                      </>
+                    ) : (
+                      "Reset All Data"
+                    )}
                   </button>
                   <p className="text-xs text-slate-400 mt-2">This will delete all events, photos, and indexed faces from the database.</p>
                 </div>
@@ -481,10 +500,23 @@ export default function AdminPage() {
               <div className="flex flex-col sm:flex-row gap-4 mb-6">
                 <button
                   onClick={handleExportDb}
-                  className="flex-1 bg-emerald-600 text-white px-4 py-3 rounded-xl font-semibold hover:bg-emerald-700 transition-all shadow-sm flex items-center justify-center gap-2"
+                  disabled={exporting}
+                  className="flex-1 bg-emerald-600 text-white px-4 py-3 rounded-xl font-semibold hover:bg-emerald-700 transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                  Export Database (Backup)
+                  {exporting ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Exporting...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                      Export Database (Backup)
+                    </>
+                  )}
                 </button>
                 <label className="flex-1">
                   <input
@@ -496,8 +528,20 @@ export default function AdminPage() {
                     disabled={importing}
                   />
                   <div className={`w-full px-4 py-3 rounded-xl font-semibold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer ${importing ? "bg-slate-200 text-slate-400" : "bg-blue-600 text-white hover:bg-blue-700"}`}>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                    {importing ? "Importing..." : "Import Database (Restore)"}
+                    {importing ? (
+                      <>
+                        <svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Importing...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                        Import Database (Restore)
+                      </>
+                    )}
                   </div>
                 </label>
               </div>
@@ -617,18 +661,18 @@ export default function AdminPage() {
               {eventPhotos.length === 0 ? (
                 <p className="text-slate-400 text-sm text-center py-8">No photos uploaded yet.</p>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                <div className="flex flex-col gap-2 max-h-[500px] overflow-y-auto pr-2">
                   {eventPhotos.map((photo) => (
-                    <div key={photo.photo_id} className="relative group aspect-square rounded-lg overflow-hidden bg-slate-100">
-                      <img
-                        src={`${apiUrl}/static/${photo.file_path}`}
-                        alt="Event photo"
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                      />
+                    <div key={photo.photo_id} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-100 hover:border-slate-300 transition-colors">
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <svg className="w-5 h-5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                        <span className="text-sm font-mono text-slate-600 truncate" title={photo.file_path}>
+                          {photo.file_path.split('/').pop() || `Photo ID: ${photo.photo_id}`}
+                        </span>
+                      </div>
                       <button
                         onClick={() => handleDeletePhoto(photo.photo_id)}
-                        className="absolute top-2 right-2 bg-red-600 text-white p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700 shadow-sm"
+                        className="text-slate-400 hover:text-red-600 p-2 rounded-lg hover:bg-red-50 transition-colors shrink-0"
                         title="Delete Photo"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
