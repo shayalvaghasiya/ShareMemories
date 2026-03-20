@@ -37,7 +37,7 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 
 
-cd "C:\Program Files (x86)\cloudflared"
+cd /mnt/c/Program Files (x86)/cloudflared
 
 .\cloudflared.exe --url http://localhost:3000
 
