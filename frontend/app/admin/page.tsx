@@ -63,6 +63,28 @@ export default function AdminPage() {
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+  useEffect(() => {
+    const checkSession = async () => {
+      const session = sessionStorage.getItem("adminSession");
+      if (session) {
+        const { token, expiry } = JSON.parse(session);
+        if (new Date().getTime() < expiry) {
+          setPassword(token);
+          setIsAuthenticated(true);
+          try {
+            await axios.get(`${apiUrl}/admin/db-status`, { headers: { "X-API-Key": token } });
+          } catch (e) {
+            setIsAuthenticated(false);
+            sessionStorage.removeItem("adminSession");
+          }
+        } else {
+          sessionStorage.removeItem("adminSession");
+        }
+      }
+    };
+    checkSession();
+  }, [apiUrl]);
+
   const fetchEvents = useCallback(async () => {
     try {
       const response = await axios.get(`${apiUrl}/events`, { headers: { "X-API-Key": password } });
@@ -336,7 +358,13 @@ export default function AdminPage() {
             onSubmit={(e) => {
               e.preventDefault();
               axios.get(`${apiUrl}/admin/db-status`, { headers: { "X-API-Key": password } })
-                .then(() => setIsAuthenticated(true))
+                .then(() => {
+                  setIsAuthenticated(true);
+                  sessionStorage.setItem("adminSession", JSON.stringify({
+                    token: password,
+                    expiry: new Date().getTime() + 2 * 60 * 60 * 1000 // 2 hours
+                  }));
+                })
                 .catch((error) => {
                   console.error("Login error:", error);
                   if (error.response?.status === 403) {
@@ -387,9 +415,21 @@ export default function AdminPage() {
               </>
             )}
           </div>
-          <Link href="/" className="px-4 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded-full transition-colors">
-            Back to Guest View
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                sessionStorage.removeItem("adminSession");
+                setIsAuthenticated(false);
+                setPassword("");
+              }}
+              className="px-4 py-2 text-sm text-red-500 hover:bg-red-50 rounded-full transition-colors"
+            >
+              Logout
+            </button>
+            <Link href="/" className="px-4 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded-full transition-colors">
+              Back to Guest View
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -400,7 +440,16 @@ export default function AdminPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               <div className="md:col-span-2 space-y-6">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                  <h2 className="text-lg font-semibold mb-4">Your Events</h2>
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold">Your Events</h2>
+                    <button
+                      onClick={fetchEvents}
+                      className="text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                      Refresh
+                    </button>
+                  </div>
                   {events.length > 0 ? (
                     <div className="grid grid-cols-1 gap-4">
                       {events.map(event => (
@@ -597,12 +646,21 @@ export default function AdminPage() {
                   <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                   Live Visitors & Access Logs
                 </h2>
-                <button
-                  onClick={() => setShowVisitors(!showVisitors)}
-                  className="text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-medium transition-colors"
-                >
-                  {showVisitors ? "Hide Logs" : "Show Logs"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={fetchVisitors}
+                    className="text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1 px-3 py-1.5"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                    Refresh
+                  </button>
+                  <button
+                    onClick={() => setShowVisitors(!showVisitors)}
+                    className="text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-medium transition-colors"
+                  >
+                    {showVisitors ? "Hide Logs" : "Show Logs"}
+                  </button>
+                </div>
               </div>
 
               {showVisitors && (
