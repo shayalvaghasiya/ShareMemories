@@ -37,3 +37,15 @@ class Face(Base):
     embedding = Column(Vector(512))
     
     photo = relationship("Photo", back_populates="faces")
+
+class Visitor(Base):
+    __tablename__ = "visitors"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(Integer, ForeignKey("events.event_id"))
+    ip_address = Column(String, index=True)
+    user_agent = Column(String)
+    first_seen = Column(DateTime, default=func.now())
+    last_seen = Column(DateTime, default=func.now())
+    
+    event = relationship("Event")

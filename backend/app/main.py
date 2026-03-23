@@ -55,6 +55,7 @@ frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[frontend_url, "http://localhost:3000"], 
+    allow_origin_regex=r"https://.*\.app\.github\.dev",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -183,6 +184,48 @@ def get_event(event_id: int, db: Session = Depends(database.get_db)):
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
+
+@app.post("/events/{event_id}/visit")
+def record_visit(event_id: int, request: Request, db: Session = Depends(database.get_db)):
+    """Endpoint for guests to ping periodically to register as active users."""
+    event = db.query(models.Event).filter(models.Event.event_id == event_id).first()
+    if not event:
+        return {"status": "ignored"}
+        
+    forwarded = request.headers.get("X-Forwarded-For")
+    ip = forwarded.split(",")[0].strip() if forwarded else request.client.host
+    user_agent = request.headers.get("User-Agent", "")[:255]
+
+    visitor = db.query(models.Visitor).filter(
+        models.Visitor.event_id == event_id,
+        models.Visitor.ip_address == ip
+    ).first()
+
+    if visitor:
+        visitor.last_seen = datetime.now()
+    else:
+        visitor = models.Visitor(
+            event_id=event_id,
+            ip_address=ip,
+            user_agent=user_agent,
+            last_seen=datetime.now(),
+            first_seen=datetime.now()
+        )
+        db.add(visitor)
+    
+    db.commit()
+    return {"status": "ok"}
+
+@app.get("/admin/visitors", dependencies=[Depends(verify_admin)])
+def get_visitors(db: Session = Depends(database.get_db)):
+    """Retrieves all visitors for the admin dashboard."""
+    visitors = db.query(models.Visitor, models.Event.event_name)\
+                 .join(models.Event, models.Visitor.event_id == models.Event.event_id)\
+                 .order_by(models.Visitor.last_seen.desc()).all()
+    
+    now = datetime.now()
+    # We consider a user "Active" if they have pinged within the last 5 minutes (300 seconds)
+    return [{ "id": v.id, "event_id": v.event_id, "event_name": event_name, "ip_address": v.ip_address, "user_agent": v.user_agent, "first_seen": v.first_seen.isoformat() if v.first_seen else None, "last_seen": v.last_seen.isoformat() if v.last_seen else None, "is_active": (now - v.last_seen).total_seconds() < 300 } for v, event_name in visitors]
 
 class FileInfo(BaseModel):
     filename: str

@@ -41,6 +41,21 @@ export default function Home() {
     }
   }, []);
 
+  // --- Visitor Tracking Hook ---
+  useEffect(() => {
+    if (view !== "login" && eventCode) {
+      // Initial check-in when entering the event
+      axios.post(`${apiUrl}/events/${eventCode}/visit`).catch(() => {});
+      
+      // Ping every 1 minute to keep session "Active"
+      const interval = setInterval(() => {
+        axios.post(`${apiUrl}/events/${eventCode}/visit`).catch(() => {});
+      }, 60000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [view, eventCode, apiUrl]);
+
   // --- Login Handlers ---
 
   const validateAndEnter = async (code: string) => {

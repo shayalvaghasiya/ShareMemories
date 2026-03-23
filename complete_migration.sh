@@ -23,14 +23,13 @@ else
     exit 1
 fi
 
-# 2. Archive the Application (Code, Env, Storage, DB Backup)
-echo "[2/3] Creating compressed archive of the application..."
+# 2. Archive only the necessary data (DB Backup, Storage, and Env files)
+echo "[2/3] Creating compressed archive of the data..."
+ENV_FILES=$(find . -name "*.env" -type f)
 tar -czvf $ARCHIVE_NAME \
-    --exclude='frontend/node_modules' \
-    --exclude='frontend/.next' \
-    --exclude='backend/__pycache__' \
-    --exclude='*.tar.gz' \
-    .
+    $DB_BACKUP_FILE \
+    storage/ \
+    $ENV_FILES
 
 echo "[3/3] Cleaning up temporary database dump..."
 rm $DB_BACKUP_FILE
