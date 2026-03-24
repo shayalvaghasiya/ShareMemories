@@ -39,6 +39,7 @@ export default function Home() {
   // App State
   const [view, setView] = useState<ViewState>("login");
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [eventName, setEventName] = useState("");
 
   // Login State
   const [eventCode, setEventCode] = useState("");
@@ -91,8 +92,9 @@ export default function Home() {
   const validateAndEnter = async (code: string) => {
     setCheckingEvent(true);
     try {
-      await axios.get(`${apiUrl}/events/${code}`);
+      const eventResponse = await axios.get(`${apiUrl}/events/${code}`);
       const accessResponse = await axios.post(`${apiUrl}/events/${code}/access`);
+      setEventName(eventResponse.data.event_name || "");
       setAccessToken(accessResponse.data.access_token);
       setView("search");
     } catch (error) {
@@ -109,8 +111,9 @@ export default function Home() {
     setCheckingEvent(true);
     // Validate Event Code against Backend
     try {
-      await axios.get(`${apiUrl}/events/${eventCode}`);
+      const eventResponse = await axios.get(`${apiUrl}/events/${eventCode}`);
       const accessResponse = await axios.post(`${apiUrl}/events/${eventCode}/access`);
+      setEventName(eventResponse.data.event_name || "");
       setAccessToken(accessResponse.data.access_token);
       setView("search");
     } catch (error) {
@@ -249,11 +252,14 @@ export default function Home() {
           <h1 className="text-2xl font-serif font-bold text-slate-900">Wedding Memories</h1>
           {view !== "login" && (
             <div className="flex items-center gap-4">
-              <span className="text-sm font-medium text-slate-600 hidden sm:block">Event: {eventCode}</span>
+              <span className="text-sm font-medium text-slate-600 hidden sm:block">
+                {eventName ? `${eventName} (${eventCode})` : `Event: ${eventCode}`}
+              </span>
               <button
                 onClick={() => {
                   setView("login");
                   setAccessToken(null);
+                  setEventName("");
                   window.history.pushState({}, '', '/');
                 }}
                 className="text-sm text-red-500 hover:bg-red-50 px-3 py-1 rounded-full transition-colors"
@@ -300,6 +306,7 @@ export default function Home() {
         {view === "search" && (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center animate-fade-in">
             <h2 className="text-xl font-medium mb-2">Find your photos</h2>
+            {eventName && <p className="text-sm font-semibold text-slate-700 mb-2">{eventName}</p>}
             <p className="text-slate-500 mb-8">Upload a clear selfie to find every photo you appeared in.</p>
 
             <div className="flex flex-col items-center gap-6">
@@ -383,6 +390,7 @@ export default function Home() {
 
               <div className="mt-2">
                 <h2 className="text-3xl font-bold text-slate-900 tracking-tight">Your Memories</h2>
+                {eventName && <p className="text-sm font-semibold text-slate-700 mt-2">{eventName}</p>}
                 <p className="text-slate-500 mt-1 font-medium">We found {results.length} photos you appeared in</p>
               </div>
             </div>
