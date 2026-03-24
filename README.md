@@ -134,3 +134,30 @@ wedding-ai/
     docker-compose up -d --build
 
     ```
+
+
+    - **Caddy setip**
+
+    mkdir -p /opt/caddy
+    nano /opt/caddy/Caddyfile
+
+    app.yourdomain.com {
+        reverse_proxy localhost:3000
+    }
+
+    api.yourdomain.com {
+        reverse_proxy localhost:8000
+    }
+
+
+    docker run -d \
+      --name caddy \
+      --restart unless-stopped \
+      --network sharememories_default \
+      -p 80:80 \
+      -p 443:443 \
+      -v /opt/caddy/Caddyfile:/etc/caddy/Caddyfile \
+      -v caddy_data:/data \
+      -v caddy_config:/config \
+      caddy:2
+
