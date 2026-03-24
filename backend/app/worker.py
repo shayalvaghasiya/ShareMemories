@@ -10,6 +10,7 @@ from .database import SessionLocal
 from . import models
 from google.oauth2 import service_account
 import google.auth.transport.requests
+from .image_utils import decode_image_bytes, load_image_from_path
 
 # Initialize Celery
 # Use Redis as both broker and backend, configured via env vars in docker-compose
@@ -63,7 +64,7 @@ def process_photo_task(photo_id: int, file_path: str):
         img = None
         # Optimization: Prioritize local thumbnail if it exists to save RAM and avoid Drive download
         if photo.thumbnail_path and os.path.exists(photo.thumbnail_path):
-            img = cv2.imread(photo.thumbnail_path)
+            img = load_image_from_path(photo.thumbnail_path)
             if img is not None:
                 # Thumbnail is already resized (max 600px in process_drive_sync), so we can just use it
                 pass
@@ -78,13 +79,12 @@ def process_photo_task(photo_id: int, file_path: str):
                     timeout=30,
                 )
                 if res.status_code == 200:
-                    nparr = np.frombuffer(res.content, np.uint8)
-                    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    img = decode_image_bytes(res.content)
             else:
                 # Fallback to local file for manual uploads
                 actual_path = resolve_storage_path(file_path)
                 if os.path.exists(actual_path):
-                    img = cv2.imread(actual_path)
+                    img = load_image_from_path(actual_path)
                     
         if img is None:
             photo.processing_status = "failed"

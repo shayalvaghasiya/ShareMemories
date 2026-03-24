@@ -132,7 +132,9 @@ def test_delete_photo(mock_remove, mock_exists, client, mock_db_session):
 
 @patch("app.main.app_face.get")
 @patch("app.main.cv2.imdecode")
-def test_search_faces(mock_imdecode, mock_face_get, client, mock_db_session):
+@patch("app.main.open", new_callable=MagicMock)
+@patch("app.main.os.makedirs")
+def test_search_faces(mock_makedirs, mock_open, mock_imdecode, mock_face_get, client, mock_db_session):
     mock_imdecode.return_value = MagicMock()
     
     mock_face = MagicMock()
@@ -152,10 +154,14 @@ def test_search_faces(mock_imdecode, mock_face_get, client, mock_db_session):
     
     assert response.status_code == 200
     assert response.json() == {"matches": ["/storage/photo1.jpg"]}
+    mock_makedirs.assert_called_once_with("/storage/uploads/1", exist_ok=True)
+    mock_open.assert_called_once()
 
 @patch("app.main.app_face.get")
 @patch("app.main.cv2.imdecode")
-def test_search_faces_no_face_detected(mock_imdecode, mock_face_get, client, mock_db_session):
+@patch("app.main.open", new_callable=MagicMock)
+@patch("app.main.os.makedirs")
+def test_search_faces_no_face_detected(mock_makedirs, mock_open, mock_imdecode, mock_face_get, client, mock_db_session):
     mock_imdecode.return_value = MagicMock()
     mock_face_get.return_value = []
     
@@ -167,6 +173,8 @@ def test_search_faces_no_face_detected(mock_imdecode, mock_face_get, client, moc
     
     assert response.status_code == 400
     assert "No face detected" in response.json()["detail"]
+    mock_makedirs.assert_called_once_with("/storage/uploads/1", exist_ok=True)
+    mock_open.assert_called_once()
 
 @patch("app.main.shutil.rmtree")
 @patch("app.main.os.path.exists", return_value=True)
@@ -176,4 +184,4 @@ def test_reset_system(mock_exists, mock_rmtree, client, mock_db_session):
     assert "System reset successfully" in response.json()["message"]
     mock_db_session.execute.assert_called_once()
     mock_db_session.commit.assert_called_once()
-    mock_rmtree.assert_called_once_with("/storage/events")
+    assert mock_rmtree.call_count == 2

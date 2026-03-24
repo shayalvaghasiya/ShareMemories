@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from google.oauth2 import service_account
 import google.auth.transport.requests
 from . import models, schemas, database
+from .image_utils import decode_image_bytes, encode_jpeg_bytes, looks_like_heic
 
 # Configure Logging
 logging.basicConfig(
@@ -161,6 +162,31 @@ def read_upload_limited(file: UploadFile, max_bytes: int) -> bytes:
             raise HTTPException(status_code=413, detail=f"File exceeds {max_bytes // (1024 * 1024)} MB limit")
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+def sanitize_upload_filename(filename: Optional[str], fallback_extension: str = ".jpg") -> str:
+    original_name = filename or "upload"
+    safe_filename = "".join([c for c in original_name if c.isalpha() or c.isdigit() or c in (" ", ".", "_", "-")]).strip()
+    if not safe_filename:
+        return f"image_{int(time.time())}_{uuid.uuid4().hex[:8]}{fallback_extension}"
+    return safe_filename
+
+
+def persist_guest_upload(event_id: int, filename: Optional[str], content_type: Optional[str], contents: bytes, img: np.ndarray) -> str:
+    storage_path = f"/storage/uploads/{event_id}"
+    os.makedirs(storage_path, exist_ok=True)
+
+    safe_filename = sanitize_upload_filename(filename)
+    if looks_like_heic(filename, content_type):
+        safe_filename = f"{os.path.splitext(safe_filename)[0]}.jpg"
+
+    file_location = f"{storage_path}/{uuid.uuid4().hex}_{safe_filename}"
+    with open(file_location, "wb") as buffer:
+        if looks_like_heic(filename, content_type):
+            buffer.write(encode_jpeg_bytes(img))
+        else:
+            buffer.write(contents)
+    return file_location
 
 
 def require_guest_event_access(event_id: int, access_token: str, db: Session) -> models.Event:
@@ -679,10 +705,10 @@ def upload_photos(
                 raise HTTPException(status_code=400, detail="Only image uploads are allowed")
             # Sanitize filename to prevent filesystem errors with special characters
             original_name = file.filename or "upload"
-            safe_filename = "".join([c for c in original_name if c.isalpha() or c.isdigit() or c in (' ', '.', '_', '-')]).strip()
-            # If filename becomes empty after sanitization, give it a generic name
-            if not safe_filename:
-                safe_filename = f"image_{int(time.time())}_{uuid.uuid4().hex[:8]}.jpg"
+            safe_filename = sanitize_upload_filename(original_name)
+
+            if looks_like_heic(original_name, file.content_type):
+                safe_filename = f"{os.path.splitext(safe_filename)[0]}.jpg"
 
             file_location = f"{storage_path}/{uuid.uuid4().hex}_{safe_filename}"
             relative_path = file_location.replace("/storage/", "", 1) if file_location.startswith("/storage/") else file_location
@@ -690,16 +716,24 @@ def upload_photos(
             
             # Save to disk
             file.file.seek(0)
-            size = 0
-            with open(file_location, "wb+") as buffer:
-                while True:
-                    chunk = file.file.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    size += len(chunk)
-                    if size > MAX_IMAGE_UPLOAD_BYTES:
-                        raise HTTPException(status_code=413, detail="Image exceeds 10 MB limit")
-                    buffer.write(chunk)
+            if looks_like_heic(original_name, file.content_type):
+                contents = read_upload_limited(file, MAX_IMAGE_UPLOAD_BYTES)
+                img = decode_image_bytes(contents)
+                if img is None:
+                    raise HTTPException(status_code=400, detail="Unsupported HEIC/HEIF image")
+                with open(file_location, "wb+") as buffer:
+                    buffer.write(encode_jpeg_bytes(img))
+            else:
+                size = 0
+                with open(file_location, "wb+") as buffer:
+                    while True:
+                        chunk = file.file.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > MAX_IMAGE_UPLOAD_BYTES:
+                            raise HTTPException(status_code=413, detail="Image exceeds 10 MB limit")
+                        buffer.write(chunk)
                 
             # Save to DB
             new_photo = models.Photo(event_id=event_id, file_path=relative_path)
@@ -717,6 +751,9 @@ def upload_photos(
             
         logger.info(f"Successfully uploaded {len(saved_photos)} photos.")
         return {"message": "Upload successful", "photo_ids": saved_photos}
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         logger.error(f"Upload failed: {e}")
         db.rollback()
@@ -778,12 +815,14 @@ def search_faces(
     contents = read_upload_limited(file, MAX_IMAGE_UPLOAD_BYTES)
     logger.info(f"File read complete. Size: {len(contents) / 1024 / 1024:.2f} MB")
 
-    nparr = np.frombuffer(contents, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    img = decode_image_bytes(contents)
     
     if img is None:
         logger.error("Error: Could not decode image file")
-        raise HTTPException(status_code=400, detail="Invalid image file")
+        raise HTTPException(status_code=400, detail="Invalid or unsupported image file")
+
+    saved_upload_path = persist_guest_upload(event_id, file.filename, file.content_type, contents, img)
+    logger.info(f"Stored guest upload at {saved_upload_path}")
 
     # Optimization: Resize image if it's too large to save RAM during inference
     max_dim = 800
@@ -1057,14 +1096,15 @@ def reset_system(background_tasks: BackgroundTasks, db: Session = Depends(databa
     # Doing this in a background task prevents the "Connection reset by peer" error 
     # if Uvicorn is running with --reload and watching the /storage directory.
     def clear_storage():
-        storage_path = "/storage/events"
-        if os.path.exists(storage_path):
-            try:
-                shutil.rmtree(storage_path)
+        storage_paths = ["/storage/events", "/storage/uploads"]
+        try:
+            for storage_path in storage_paths:
+                if os.path.exists(storage_path):
+                    shutil.rmtree(storage_path)
                 os.makedirs(storage_path, exist_ok=True)
-                logger.info("Storage cleared and recreated successfully.")
-            except Exception as e:
-                logger.error(f"Error clearing storage: {e}")
+            logger.info("Storage cleared and recreated successfully.")
+        except Exception as e:
+            logger.error(f"Error clearing storage: {e}")
             
     background_tasks.add_task(clear_storage)
 
