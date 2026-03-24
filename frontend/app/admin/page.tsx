@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import axios from "axios";
 import Link from "next/link";
 
@@ -36,6 +36,35 @@ interface Visitor {
   is_active: boolean;
 }
 
+function resolveApiUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
+
+  if (typeof window === "undefined") {
+    return configured || "http://localhost:8000";
+  }
+
+  const isRemoteHost = !["localhost", "127.0.0.1"].includes(window.location.hostname);
+  const configuredIsLocal = !!configured && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(configured);
+
+  // Ignore local-only config when app is opened on a remote forwarded host.
+  if (configured && !(configuredIsLocal && isRemoteHost)) {
+    return configured;
+  }
+
+  const { protocol, hostname, host } = window.location;
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return `${protocol}//${hostname}:8000`;
+  }
+
+  // GitHub Codespaces/forwarding pattern: 3000-<id> -> 8000-<id>
+  const forwardedHost = host.match(/^\d+-(.+)$/);
+  if (forwardedHost) {
+    return `${protocol}//8000-${forwardedHost[1]}`;
+  }
+
+  return `${protocol}//${hostname}:8000`;
+}
+
 export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
@@ -61,7 +90,7 @@ export default function AdminPage() {
   const [visitors, setVisitors] = useState<Visitor[]>([]);
   const [showVisitors, setShowVisitors] = useState(false);
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const apiUrl = useMemo(() => resolveApiUrl(), []);
 
   const fetchEvents = useCallback(async () => {
     try {

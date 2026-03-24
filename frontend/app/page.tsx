@@ -1,10 +1,39 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import Link from "next/link";
 
 type ViewState = "login" | "search" | "results";
+
+function resolveApiUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
+
+  if (typeof window === "undefined") {
+    return configured || "http://localhost:8000";
+  }
+
+  const isRemoteHost = !["localhost", "127.0.0.1"].includes(window.location.hostname);
+  const configuredIsLocal = !!configured && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(configured);
+
+  // Ignore local-only config when app is opened on a remote forwarded host.
+  if (configured && !(configuredIsLocal && isRemoteHost)) {
+    return configured;
+  }
+
+  const { protocol, hostname, host } = window.location;
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return `${protocol}//${hostname}:8000`;
+  }
+
+  // GitHub Codespaces/forwarding pattern: 3000-<id> -> 8000-<id>
+  const forwardedHost = host.match(/^\d+-(.+)$/);
+  if (forwardedHost) {
+    return `${protocol}//8000-${forwardedHost[1]}`;
+  }
+
+  return `${protocol}//${hostname}:8000`;
+}
 
 export default function Home() {
   // App State
@@ -30,7 +59,7 @@ export default function Home() {
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const apiUrl = useMemo(() => resolveApiUrl(), []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -465,7 +494,8 @@ export default function Home() {
                 <p className="text-slate-400">No matches found. Try a clearer selfie with good lighting.</p>
               </div>
             ) : (
-              /* Masonry Grid using CSS columns */
+              <>
+              {/* Masonry Grid using CSS columns */}
               <div className="columns-2 md:columns-3 gap-4 space-y-4">
                 {results.map((photo, idx) => {
                   const isSelected = selectedPhotos.has(photo.photo_id);
@@ -490,6 +520,12 @@ export default function Home() {
                         alt={`Match `}
                         className={`w-full h-auto object-cover transform transition duration-700 ${!isSelectMode && 'group-hover:scale-105'} ${isSelected ? 'opacity-90' : ''}`}
                         loading="lazy"
+                          onError={(e) => {
+                            const img = e.currentTarget;
+                            if (img.dataset.fallbackApplied === "1") return;
+                            img.dataset.fallbackApplied = "1";
+                            img.src = `${apiUrl}${photo.download_url}`;
+                          }}
                       />
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors pointer-events-none" />
 
@@ -519,6 +555,7 @@ export default function Home() {
                   );
                 })}
               </div>
+              </>
             )}
           </div>
         )}

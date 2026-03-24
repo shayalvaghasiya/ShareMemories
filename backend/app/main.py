@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
 GUEST_TOKEN_TTL_SECONDS = 15 * 60
 
+
+class EventAccessResponse(BaseModel):
+    event_id: int
+    access_token: str
+    expires_in: int
+
 class NumpyEncoder(json.JSONEncoder):
     """Custom encoder for numpy data types"""
     def default(self, obj):
@@ -81,7 +87,11 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "same-origin"
-    response.headers["Cache-Control"] = "no-store"
+    # Allow short-lived browser caching for image previews to improve gallery performance.
+    if request.url.path.startswith("/photos/") and request.url.path.endswith("/view"):
+        response.headers["Cache-Control"] = "private, max-age=300"
+    else:
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -326,11 +336,6 @@ class SyncDriveRequest(BaseModel):
     folder_url: str
 
 
-class EventAccessResponse(BaseModel):
-    event_id: int
-    access_token: str
-    expires_in: int
-
 def process_drive_sync(event_id: int, files: list):
     db: Session = database.SessionLocal()
     try:
@@ -538,58 +543,64 @@ def download_photo(
     photo_id: int,
     access_token: Optional[str] = None,
     api_key: Optional[str] = Security(api_key_header),
-    db: Session = Depends(database.get_db),
 ):
-    photo = db.query(models.Photo).filter(models.Photo.photo_id == photo_id).first()
-    if not photo:
-        raise HTTPException(status_code=404, detail="Photo not found")
-    if not api_key:
-        if not access_token:
-            raise HTTPException(status_code=403, detail="Access token required")
-        verify_guest_access_token(photo.event_id, access_token)
-    else:
-        verify_admin(api_key)
-        
-    if photo.drive_file_id:
-        token = get_drive_token()
-        headers = {"Authorization": f"Bearer {token}"}
-        dl_url = f"https://www.googleapis.com/drive/v3/files/{photo.drive_file_id}?alt=media"
-        
-        res = requests.get(dl_url, headers=headers, stream=True, timeout=30)
-        if res.status_code != 200:
-            raise HTTPException(status_code=res.status_code, detail="Failed to fetch from Google Drive")
-            
-        return StreamingResponse(
-            res.iter_content(chunk_size=1024*1024), 
-            media_type=res.headers.get("Content-Type", "image/jpeg"),
-            headers={"Content-Disposition": f'attachment; filename="photo_{photo_id}.jpg"'}
-        )
-    elif photo.file_path:
-        actual_path = resolve_storage_path(photo.file_path)
-        if os.path.exists(actual_path):
-            return FileResponse(
-                path=actual_path,
-                media_type="image/jpeg",
-                filename=f"photo_{photo_id}.jpg"
+    db = database.SessionLocal()
+    try:
+        photo = db.query(models.Photo).filter(models.Photo.photo_id == photo_id).first()
+        if not photo:
+            raise HTTPException(status_code=404, detail="Photo not found")
+        if not api_key:
+            if not access_token:
+                raise HTTPException(status_code=403, detail="Access token required")
+            verify_guest_access_token(photo.event_id, access_token)
+        else:
+            verify_admin(api_key)
+
+        if photo.drive_file_id:
+            token = get_drive_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            dl_url = f"https://www.googleapis.com/drive/v3/files/{photo.drive_file_id}?alt=media"
+
+            res = requests.get(dl_url, headers=headers, stream=True, timeout=30)
+            if res.status_code != 200:
+                raise HTTPException(status_code=res.status_code, detail="Failed to fetch from Google Drive")
+
+            return StreamingResponse(
+                res.iter_content(chunk_size=1024*1024),
+                media_type=res.headers.get("Content-Type", "image/jpeg"),
+                headers={"Content-Disposition": f'attachment; filename="photo_{photo_id}.jpg"'}
             )
-            
-    raise HTTPException(status_code=404, detail="File not found on server")
+        elif photo.file_path:
+            actual_path = resolve_storage_path(photo.file_path)
+            if os.path.exists(actual_path):
+                return FileResponse(
+                    path=actual_path,
+                    media_type="image/jpeg",
+                    filename=f"photo_{photo_id}.jpg"
+                )
+
+        raise HTTPException(status_code=404, detail="File not found on server")
+    finally:
+        db.close()
 
 @app.get("/photos/{photo_id}/view")
 def view_photo(
     photo_id: int,
     access_token: str,
-    db: Session = Depends(database.get_db),
 ):
-    photo = db.query(models.Photo).filter(models.Photo.photo_id == photo_id).first()
-    if not photo:
-        raise HTTPException(status_code=404, detail="Photo not found")
-    verify_guest_access_token(photo.event_id, access_token)
+    db = database.SessionLocal()
+    try:
+        photo = db.query(models.Photo).filter(models.Photo.photo_id == photo_id).first()
+        if not photo:
+            raise HTTPException(status_code=404, detail="Photo not found")
+        verify_guest_access_token(photo.event_id, access_token)
 
-    actual_path = resolve_storage_path(photo.thumbnail_path or photo.file_path)
-    if not os.path.exists(actual_path):
-        raise HTTPException(status_code=404, detail="File not found on server")
-    return FileResponse(path=actual_path, media_type="image/jpeg", filename=f"photo_{photo_id}.jpg")
+        actual_path = resolve_storage_path(photo.thumbnail_path or photo.file_path)
+        if not os.path.exists(actual_path):
+            raise HTTPException(status_code=404, detail="File not found on server")
+        return FileResponse(path=actual_path, media_type="image/jpeg", filename=f"photo_{photo_id}.jpg")
+    finally:
+        db.close()
 
 
 @app.get("/events/{event_id}/download-zip")
@@ -802,10 +813,6 @@ def search_faces(
     # Search using pgvector cosine distance
     logger.info("Querying database for matches...")
     
-    # DEBUG: Get top 5 closest regardless of threshold to see values
-    debug_results = db.query(models.Face.embedding.cosine_distance(user_embedding)).order_by(models.Face.embedding.cosine_distance(user_embedding)).limit(5).all()
-    logger.info(f"DEBUG: Top 5 distances found: {[r[0] for r in debug_results]}")
-
     # Filter by Event ID and Cosine Distance
     results = db.query(models.Photo).join(models.Face)\
         .filter(models.Photo.event_id == event_id)\

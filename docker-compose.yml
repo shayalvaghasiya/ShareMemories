@@ -32,7 +32,11 @@ services:
       - redis
     environment:
       PYTHONUNBUFFERED: 1
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_ENCODED}@db:5432/${POSTGRES_DB}
+      DB_POOL_SIZE: 25
+      DB_MAX_OVERFLOW: 50
+      DB_POOL_TIMEOUT: 60
+      DB_POOL_RECYCLE: 1800
       REDIS_URL: redis://redis:6379/0
     env_file:
       - ./backend/.env
@@ -49,7 +53,7 @@ services:
       - redis
     environment:
       PYTHONUNBUFFERED: 1
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_ENCODED}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
     env_file:
       - ./backend/.env
