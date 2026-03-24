@@ -6,6 +6,28 @@ import Link from "next/link";
 
 type ViewState = "login" | "search" | "results";
 
+function isHeicLikeFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  const mime = (file.type || "").toLowerCase();
+  return name.endsWith(".heic") || name.endsWith(".heif") || mime.includes("heic") || mime.includes("heif");
+}
+
+async function buildPreviewUrl(file: File): Promise<string> {
+  if (!isHeicLikeFile(file)) {
+    return URL.createObjectURL(file);
+  }
+
+  const converterModule = await import("heic2any");
+  const convertHeic = converterModule.default as (options: { blob: Blob; toType: string; quality: number }) => Promise<Blob | Blob[]>;
+  const result = await convertHeic({
+    blob: file,
+    toType: "image/jpeg",
+    quality: 0.9,
+  });
+  const previewBlob = Array.isArray(result) ? result[0] : result;
+  return URL.createObjectURL(previewBlob);
+}
+
 function resolveApiUrl(): string {
   const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
 
@@ -61,6 +83,14 @@ export default function Home() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
   const apiUrl = useMemo(() => resolveApiUrl(), []);
+
+  useEffect(() => {
+    return () => {
+      if (preview) {
+        URL.revokeObjectURL(preview);
+      }
+    };
+  }, [preview]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -191,11 +221,29 @@ export default function Home() {
 
   // --- Camera/File Handlers ---
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setSelectedFile(file);
-      setPreview(URL.createObjectURL(file));
+      setSearchError(null);
+      try {
+        const nextPreview = await buildPreviewUrl(file);
+        setPreview((current) => {
+          if (current) {
+            URL.revokeObjectURL(current);
+          }
+          return nextPreview;
+        });
+      } catch (error) {
+        console.error("Preview generation failed", error);
+        setPreview((current) => {
+          if (current) {
+            URL.revokeObjectURL(current);
+          }
+          return null;
+        });
+        setSearchError("Preview is not available for this file on your browser, but upload should still work.");
+      }
     }
   };
 

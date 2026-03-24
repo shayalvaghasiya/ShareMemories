@@ -402,8 +402,7 @@ def process_drive_sync(event_id: int, files: list):
                         logger.error(f"Failed to download {file_id}: {dl_res.status_code}")
                         continue
                         
-                    nparr = np.frombuffer(dl_res.content, np.uint8)
-                    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    img = decode_image_bytes(dl_res.content)
                     if img is None:
                         logger.error(f"Failed to decode image {file_id}")
                         continue
@@ -484,8 +483,7 @@ def repair_missing_photos():
                     dl_res = requests.get(dl_url, headers=headers, timeout=30)
 
                 if dl_res.status_code == 200:
-                    nparr = np.frombuffer(dl_res.content, np.uint8)
-                    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    img = decode_image_bytes(dl_res.content)
                     if img is not None:
                         # Resize for thumbnail
                         height, width = img.shape[:2]
