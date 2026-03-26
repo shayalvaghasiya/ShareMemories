@@ -23,6 +23,7 @@ class EventCreate(EventBase):
 
 class Event(EventBase):
     event_id: int
+    preview_image_path: Optional[str] = None
 
     class Config:
         orm_mode = True

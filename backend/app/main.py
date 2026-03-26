@@ -325,6 +325,7 @@ def startup_event():
             # 3. Migrate schema (add missing columns to existing tables)
             with database.engine.begin() as conn:
                 try:
+                    conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS preview_image_path VARCHAR"))
                     conn.execute(text("ALTER TABLE photos ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR"))
                     conn.execute(text("ALTER TABLE photos ADD COLUMN IF NOT EXISTS thumbnail_path VARCHAR"))
                     conn.execute(text("ALTER TABLE photos ADD COLUMN IF NOT EXISTS processing_status VARCHAR DEFAULT 'pending'"))
@@ -377,6 +378,59 @@ def get_event(event_id: int, db: Session = Depends(database.get_db)):
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
+
+
+@app.post("/events/{event_id}/preview-image", dependencies=[Depends(verify_admin)])
+def upload_event_preview_image(
+    event_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(database.get_db),
+):
+    event = db.query(models.Event).filter(models.Event.event_id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if not is_supported_image_upload(file):
+        raise HTTPException(status_code=400, detail="Only image uploads are allowed")
+
+    contents = read_upload_limited(file, MAX_IMAGE_UPLOAD_BYTES)
+    img = decode_image_bytes(contents)
+    if img is None:
+        raise HTTPException(status_code=400, detail="Invalid or unsupported image file")
+
+    storage_path = f"/storage/events/{event_id}/preview"
+    os.makedirs(storage_path, exist_ok=True)
+    absolute_path = f"{storage_path}/preview.jpg"
+    relative_path = absolute_path.replace("/storage/", "", 1)
+
+    with open(absolute_path, "wb") as buffer:
+        buffer.write(encode_jpeg_bytes(img))
+
+    event.preview_image_path = relative_path
+    db.commit()
+    db.refresh(event)
+
+    return {
+        "message": "Preview image updated",
+        "event": event,
+        "preview_image_url": f"/events/{event_id}/preview-image",
+    }
+
+
+@app.get("/events/{event_id}/preview-image")
+def get_event_preview_image(event_id: int, db: Session = Depends(database.get_db)):
+    event = db.query(models.Event).filter(models.Event.event_id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if not event.preview_image_path:
+        raise HTTPException(status_code=404, detail="Preview image not found")
+
+    preview_path = resolve_storage_path(event.preview_image_path)
+    if not os.path.exists(preview_path):
+        raise HTTPException(status_code=404, detail="Preview image not found")
+
+    return FileResponse(path=preview_path, media_type="image/jpeg", filename=f"event_{event_id}_preview.jpg")
 
 
 @app.post("/events/{event_id}/access", response_model=EventAccessResponse)

@@ -141,13 +141,13 @@ wedding-ai/
     mkdir -p /opt/caddy
     nano /opt/caddy/Caddyfile
 
-    app.yourdomain.com {
-        reverse_proxy localhost:3000
-    }
+      sharememories.app {
+          reverse_proxy frontend:3000
+      }
 
-    api.yourdomain.com {
-        reverse_proxy localhost:8000
-    }
+      api.sharememories.app {
+          reverse_proxy backend:8000
+      }
 
 
     docker run -d \

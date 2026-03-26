@@ -8,6 +8,7 @@ class Event(Base):
     
     event_id = Column(Integer, primary_key=True, index=True)
     event_name = Column(String, nullable=False)
+    preview_image_path = Column(String, nullable=True)
     event_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())
     

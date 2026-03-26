@@ -9,6 +9,7 @@ interface Event {
   name: string;
   event_name?: string; // Handle potentially different backend mapping
   event_id?: string;
+  preview_image_path?: string;
 }
 
 interface Photo {
@@ -75,6 +76,8 @@ export default function AdminPage() {
   const [folderUrl, setFolderUrl] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState({ active: false, current: 0, total: 0 });
+  const [previewUploading, setPreviewUploading] = useState(false);
+  const [previewRefreshKey, setPreviewRefreshKey] = useState(Date.now());
   const [statusMessage, setStatusMessage] = useState("");
 
   // DB Management state
@@ -258,6 +261,39 @@ export default function AdminPage() {
     }
   };
 
+  const handlePreviewImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selectedEvent) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setPreviewUploading(true);
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await axios.post(
+        `${apiUrl}/events/${getEventId(selectedEvent)}/preview-image`,
+        formData,
+        { headers: { "X-API-Key": password } }
+      );
+
+      const updatedEvent = response.data?.event as Event | undefined;
+      if (updatedEvent) {
+        setSelectedEvent(updatedEvent);
+        setEvents((prev) => prev.map((ev) => (getEventId(ev) === getEventId(updatedEvent) ? updatedEvent : ev)));
+      }
+
+      setPreviewRefreshKey(Date.now());
+      setStatusMessage("Event preview image updated.");
+    } catch (error) {
+      console.error("Preview image upload failed", error);
+      setStatusMessage("Error: Failed to update event preview image.");
+    } finally {
+      setPreviewUploading(false);
+      e.target.value = "";
+    }
+  };
+
   const handleReset = async () => {
     if (window.confirm("Are you sure you want to reset all data? This cannot be undone.")) {
       try {
@@ -348,10 +384,11 @@ export default function AdminPage() {
   // Helper to normalize ID access (backend might return id or event_id)
   const getEventId = (ev: Event) => ev.id || ev.event_id || "";
   const getEventName = (ev: Event) => ev.name || ev.event_name || "Unnamed Event";
+  const getPreviewImageUrl = (ev: Event) => `${apiUrl}/events/${getEventId(ev)}/preview-image?t=${previewRefreshKey}`;
 
   const copyShareLink = () => {
     if (!selectedEvent) return;
-    const link = `${window.location.origin}/?eventCode=${getEventId(selectedEvent)}`;
+    const link = `${window.location.origin}/event/${encodeURIComponent(getEventId(selectedEvent))}`;
     navigator.clipboard.writeText(link);
     alert("Link copied to clipboard: " + link);
   };
@@ -736,6 +773,37 @@ export default function AdminPage() {
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path></svg>
                 Copy Guest Link
               </button>
+            </div>
+
+            {/* Sync Area */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+              <h2 className="text-lg font-semibold mb-4">Share Preview Image</h2>
+              <p className="text-sm text-slate-500 mb-4">Upload the image that should appear when this event link is shared.</p>
+
+              {selectedEvent?.preview_image_path ? (
+                <div className="mb-4 rounded-xl border border-slate-200 overflow-hidden bg-slate-50">
+                  <img
+                    src={getPreviewImageUrl(selectedEvent)}
+                    alt={`${getEventName(selectedEvent)} preview`}
+                    className="w-full max-h-72 object-cover"
+                  />
+                </div>
+              ) : (
+                <div className="mb-4 p-4 rounded-xl border border-dashed border-slate-300 text-sm text-slate-500 bg-slate-50">
+                  No custom preview image yet. The default sharing image will be used.
+                </div>
+              )}
+
+              <label className="inline-flex items-center gap-2 cursor-pointer bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors font-semibold">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePreviewImageUpload}
+                  className="hidden"
+                  disabled={previewUploading}
+                />
+                {previewUploading ? "Uploading..." : "Upload Preview Image"}
+              </label>
             </div>
 
             {/* Sync Area */}

@@ -57,7 +57,11 @@ function resolveApiUrl(): string {
   return `${protocol}//${hostname}:8000`;
 }
 
-export default function Home() {
+type HomeProps = {
+  initialEventCode?: string;
+};
+
+export default function Home({ initialEventCode }: HomeProps = {}) {
   // App State
   const [view, setView] = useState<ViewState>("login");
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -95,12 +99,12 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    const code = params.get("eventCode");
+    const code = params.get("eventCode") || initialEventCode;
     if (code) {
       setEventCode(code);
       validateAndEnter(code);
     }
-  }, []);
+  }, [initialEventCode]);
 
   // --- Visitor Tracking Hook ---
   useEffect(() => {
