@@ -9,7 +9,7 @@ An AI-powered web application that allows wedding guests to find all their photo
 - **AI Processing**: Automatically detects faces and generates 512-dimensional embeddings using `InsightFace`.
 - **Vector Search**: Uses PostgreSQL `pgvector` for ultra-fast cosine similarity searching.
 - **Privacy-Focused**: Guests only see photos they appear in.
-- **Self-Hosted**: Images and data stay on your local server.
+- **Self-Hosted**: Images are stored in your google drive.
 
 ## 🛠️ Tech Stack
 
@@ -107,12 +107,8 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 ## ⚡ Quick Start
 
-1. **Create and configure .env file**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your settings
-   ```
-
+1. **Environment Setup**
+ 
 2. **Start the Application**
    Run the entire stack with Docker Compose:
    ```bash
@@ -171,8 +167,7 @@ wedding-ai/
 │   │       └── page.tsx     # Admin Upload UI
 │   └── next.config.mjs
 ├── storage/                 # Local storage for uploaded photos
-├── .env                     # Environment configuration (create from .env.example)
-├── .env.example             # Example configuration template
+├── .env                     # Environment configuration
 ├── docker-compose.yml       # Infrastructure orchestration
 └── README.md
 ```
@@ -216,7 +211,7 @@ wedding-ai/
     ```
 
 
-    - **Caddy setip**
+    - **Caddy setup**
 
     mkdir -p /opt/caddy
     nano /opt/caddy/Caddyfile
