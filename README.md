@@ -2,7 +2,7 @@
 
 An AI-powered web application that allows wedding guests to find all their photos from an event simply by uploading a selfie. The system uses facial recognition and vector similarity search to match faces in milliseconds.
 
-## 🚀 Features
+## ✨ Features
 
 - **Event Management**: Create separate events (e.g., "Wedding", "Reception") to organize photos.
 - **Bulk Upload**: Admins can upload thousands of event photos which are processed in the background.
@@ -10,6 +10,7 @@ An AI-powered web application that allows wedding guests to find all their photo
 - **Vector Search**: Uses PostgreSQL `pgvector` for ultra-fast cosine similarity searching.
 - **Privacy-Focused**: Guests only see photos they appear in.
 - **Self-Hosted**: Images are stored in your google drive.
+
 
 ## 🛠️ Tech Stack
 
@@ -27,23 +28,61 @@ An AI-powered web application that allows wedding guests to find all their photo
 ### Database & Infrastructure
 - **Database**: PostgreSQL 16 + `pgvector` extension
 - **Containerization**: Docker & Docker Compose
-- **Storage**: Local filesystem mapping
+- **CI/CD**: GitHub Actions & GitHub Container Registry (GHCR)
+- **Reverse Proxy**: Caddy (Automatic HTTPS)
+- **Hosting**: DigitalOcean Droplet
 
-## 📋 Prerequisites
+---
 
-- Docker Desktop installed and running.
+## 🚀 Production Deployment Guide
 
-## ⚙️ Configuration
+This project is configured for automated Continuous Deployment (CD) to a DigitalOcean Droplet using GitHub Actions.
 
-### Environment Setup
-
-The application uses a single consolidated `.env` file at the root level. All environment variables for the backend, frontend, and database are configured here.
-
-**Step 1: Create your .env file**
-
-Copy the example configuration:
+### Step 1: Server Preparation
+SSH into your Ubuntu Droplet and install Docker. Then, prepare the necessary network and storage directories:
 ```bash
-cp .env.example .env
+# Create a custom Docker network for container communication
+docker network create sharememories_net
+
+# Create application directories
+mkdir -p /opt/ShareMemories/storage
+mkdir -p /opt/caddy
+```
+
+### Step 2: Configure Environment Variables
+Create your environment file on the server at `/opt/ShareMemories/.env`:
+```bash
+nano /opt/ShareMemories/.env
+```
+Populate it with your secrets:
+```env
+DATABASE_URL="postgresql://admin:postgres%40admin@wedding_db:5432/wedding_db"
+REDIS_URL="redis://wedding_redis:6379/0"
+ADMIN_PASSWORD="YourSecurePassword123"
+APP_SECRET_KEY="your-random-secret-key"
+GOOGLE_CREDENTIALS_JSON='{...}'
+```
+
+### Step 3: Start Stateful Services (Database & Redis)
+Stateful services are run manually once, so they are never destroyed by the CI/CD pipeline.
+```bash
+# Start PostgreSQL
+docker run -d \
+  --name wedding_db \
+  --network sharememories_net \
+  --restart always \
+  -e POSTGRES_USER=admin \
+  -e POSTGRES_PASSWORD=postgres@admin \
+  -e POSTGRES_DB=wedding_db \
+  -v sharememories_postgres_data:/var/lib/postgresql/data \
+  pgvector/pgvector:pg16
+
+# Start Redis
+docker run -d \
+  --name wedding_redis \
+  --network sharememories_net \
+  --restart always \
+  redis:alpine
 ```
 
 **Step 2: Update the .env file with your values**
@@ -217,18 +256,18 @@ wedding-ai/
     nano /opt/caddy/Caddyfile
 
       sharememories.app {
-          reverse_proxy frontend:3000
+          reverse_proxy wedding_frontend:3000
       }
 
       api.sharememories.app {
-          reverse_proxy backend:8000
+          reverse_proxy wedding_api:8000
       }
 
 
     docker run -d \
       --name caddy \
       --restart unless-stopped \
-      --network sharememories_default \
+      --network sharememories_net \
       -p 80:80 \
       -p 443:443 \
       -v /opt/caddy/Caddyfile:/etc/caddy/Caddyfile \
@@ -246,7 +285,7 @@ wedding-ai/
   -e POSTGRES_USER=admin \
   -e POSTGRES_PASSWORD=postgres@admin \
   -e POSTGRES_DB=wedding_db \
-  -v /opt/sharememories/db_data:/var/lib/postgresql/data \
+  -v sharememories_postgres_data:/var/lib/postgresql/data \
   pgvector/pgvector:pg16
 
   <!-- APPLICATION REDIS  -->
