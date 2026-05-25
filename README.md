@@ -30,16 +30,14 @@ An AI-powered web application that allows wedding guests to find all their photo
 - **Containerization**: Docker & Docker Compose
 - **CI/CD**: GitHub Actions & GitHub Container Registry (GHCR)
 - **Reverse Proxy**: Caddy (Automatic HTTPS)
-- **Hosting**: DigitalOcean Droplet
-
 ---
 
 ## 🚀 Production Deployment Guide
 
-This project is configured for automated Continuous Deployment (CD) to a DigitalOcean Droplet using GitHub Actions.
+This project is configured for automated Continuous Deployment (CD) using GitHub Actions.
 
 ### Step 1: Server Preparation
-SSH into your Ubuntu Droplet and install Docker. Then, prepare the necessary network and storage directories:
+SSH into your Ubuntu VM and install Docker. Then, prepare the necessary network and storage directories:
 ```bash
 # Create a custom Docker network for container communication
 docker network create sharememories_net
@@ -251,7 +249,7 @@ wedding-ai/
 
 
     - **Caddy setup**
-
+    ```bash 
     mkdir -p /opt/caddy
     nano /opt/caddy/Caddyfile
 
@@ -263,6 +261,9 @@ wedding-ai/
           reverse_proxy wedding_api:8000
       }
 
+    ```
+
+    ```bash
 
     docker run -d \
       --name caddy \
@@ -275,8 +276,11 @@ wedding-ai/
       -v caddy_config:/config \
       caddy:2
 
-  
+    ```
+
   <!-- application postgres db -->
+
+  ```bash
 
   docker run -d \
   --name wedding_db \
@@ -288,10 +292,15 @@ wedding-ai/
   -v sharememories_postgres_data:/var/lib/postgresql/data \
   pgvector/pgvector:pg16
 
+  ```
+
   <!-- APPLICATION REDIS  -->
 
+```bash
   docker run -d \
   --name wedding_redis \
   --network sharememories_net \
   --restart always \
   redis:alpine
+
+```
