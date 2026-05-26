@@ -26,6 +26,15 @@ resource "aws_security_group" "alb_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Custom Backend Port
+  ingress {
+    description = "HTTP for Backend API"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # Outbound (Egress) - Allow the ALB to send traffic anywhere
   egress {
     from_port   = 0
@@ -102,5 +111,64 @@ resource "aws_security_group" "rds_sg" {
 
     tags = {
         Name = "sharememories-rds-sg"
+    }
+}
+
+# ==============================================================================
+# 4. Redis (ElastiCache) Security Group
+# Only allow inbound traffic from ECS
+# ==============================================================================
+
+resource "aws_security_group" "redis_sg" {
+    name        = "sharememories-redis-sg"
+    vpc_id      = aws_vpc.main.id
+    description = "Allow inbound traffic from ECS to Redis"
+
+    # Redis port
+    ingress {
+        description     = "Only allow Redis traffic from the ECS cluster"
+        from_port       = 6379
+        to_port         = 6379
+        protocol        = "tcp"
+        security_groups = [aws_security_group.ecs_sg.id]
+    }
+
+    # Outbound (Egress)
+    egress {
+        from_port   = 0
+        to_port     = 0
+        protocol    = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
+    tags = {
+        Name = "sharememories-redis-sg"
+    }
+}
+
+# ==============================================================================
+# 5. EFS Security Group
+# Only allow inbound NFS traffic from ECS
+# ==============================================================================
+
+resource "aws_security_group" "efs_sg" {
+    name        = "sharememories-efs-sg"
+    vpc_id      = aws_vpc.main.id
+    description = "Allow inbound NFS traffic from ECS"
+
+    # NFS Port
+    ingress {
+        description     = "Allow NFS from ECS"
+        from_port       = 2049
+        to_port         = 2049
+        protocol        = "tcp"
+        security_groups = [aws_security_group.ecs_sg.id]
+    }
+
+    egress {
+        from_port   = 0
+        to_port     = 0
+        protocol    = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
     }
 }
