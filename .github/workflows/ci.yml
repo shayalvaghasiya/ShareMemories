@@ -2,7 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "aws-deployment" ]
+    # Trigger this workflow ONLY when pushing to the new AWS branch
+    branches: [ "feature/aws-deployment" ]
+  workflow_dispatch: # Allows you to trigger the deployment manually from the GitHub UI
 
 env:
   REGISTRY: ghcr.io
@@ -64,20 +66,10 @@ jobs:
             ${{ steps.login-ecr.outputs.registry }}/sharememories-frontend:latest
             ${{ steps.login-ecr.outputs.registry }}/sharememories-frontend:${{ github.sha }}
 
-  deploy:
+  deploy-aws-dev:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: SSH into Droplet and Deploy
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.DROPLET_IP }}
-          username: root
-          key: ${{ secrets.DROPLET_SSH_KEY }}
-          script: |
-            # Run the deployment script we created on the server
-            /opt/ShareMemories/deploy.sh
-            
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -87,7 +79,7 @@ jobs:
           
       - name: Deploy to Amazon ECS
         run: |
-          echo "AWS Deployment logic goes here!"
-          # Example:
-          # aws ecs update-service --cluster ShareMemoriesCluster --service backend-service --force-new-deployment
-          # aws ecs update-service --cluster ShareMemoriesCluster --service frontend-service --force-new-deployment
+          echo "Forcing ECS to pull the new images and restart..."
+          aws ecs update-service --cluster sharememories-cluster --service frontend-service --force-new-deployment
+          aws ecs update-service --cluster sharememories-cluster --service backend-service --force-new-deployment
+          aws ecs update-service --cluster sharememories-cluster --service worker-service --force-new-deployment
