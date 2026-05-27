@@ -11,6 +11,11 @@ resource "aws_ecs_cluster" "main" {
   }
 }
 
+resource "aws_cloudwatch_log_group" "ecs_logs" {
+  name              = "/ecs/sharememories"
+  retention_in_days = 30
+}
+
 # The Execution Role: Allows ECS to pull images from ECR and write logs to CloudWatch
 resource "aws_iam_role" "ecs_execution_role" {
   name = "sharememories-ecs-execution-role"
@@ -114,7 +119,15 @@ resource "aws_ecs_task_definition" "frontend" {
                     containerPort = 3000
                     hostPort = 3000
                 }
-            ]
+            ],
+            logConfiguration = {
+                logDriver = "awslogs"
+                options = {
+                    "awslogs-group"         = aws_cloudwatch_log_group.ecs_logs.name
+                    "awslogs-region"        = "us-east-1"
+                    "awslogs-stream-prefix" = "frontend"
+                }
+            }
         }
     ])
 }
@@ -230,7 +243,15 @@ resource "aws_ecs_task_definition" "backend" {
                     name      = "ADMIN_PASSWORD"
                     valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:ADMIN_PASSWORD::"
                 }
-            ]
+            ],
+            logConfiguration = {
+                logDriver = "awslogs"
+                options = {
+                    "awslogs-group"         = aws_cloudwatch_log_group.ecs_logs.name
+                    "awslogs-region"        = "us-east-1"
+                    "awslogs-stream-prefix" = "backend"
+                }
+            }
         }
     ])
 }
@@ -342,7 +363,15 @@ resource "aws_ecs_task_definition" "worker" {
                     name      = "ADMIN_PASSWORD"
                     valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:ADMIN_PASSWORD::"
                 }
-            ]
+            ],
+            logConfiguration = {
+                logDriver = "awslogs"
+                options = {
+                    "awslogs-group"         = aws_cloudwatch_log_group.ecs_logs.name
+                    "awslogs-region"        = "us-east-1"
+                    "awslogs-stream-prefix" = "worker"
+                }
+            }
         }
     ])
 }
