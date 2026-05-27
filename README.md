@@ -9,7 +9,7 @@ An AI-powered web application that allows wedding guests to find all their photo
 - **AI Processing**: Automatically detects faces and generates 512-dimensional embeddings using `InsightFace`.
 - **Vector Search**: Uses PostgreSQL `pgvector` for ultra-fast cosine similarity searching.
 - **Privacy-Focused**: Guests only see photos they appear in.
-- **Self-Hosted**: Images are stored in your google drive.
+- **Cloud Storage**: Images are natively streamed and stored securely in Amazon S3.
 
 
 ## 🛠️ Tech Stack
@@ -58,7 +58,6 @@ DATABASE_URL="postgresql://admin:postgres%40admin@wedding_db:5432/wedding_db"
 REDIS_URL="redis://wedding_redis:6379/0"
 ADMIN_PASSWORD="YourSecurePassword123"
 APP_SECRET_KEY="your-random-secret-key"
-GOOGLE_CREDENTIALS_JSON='{...}'
 ```
 
 ### Step 3: Start Stateful Services (Database & Redis)

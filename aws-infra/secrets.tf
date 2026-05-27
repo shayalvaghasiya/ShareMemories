@@ -1,5 +1,5 @@
 # ==============================================================================
-# Application Secrets (Google Drive, Admin Password, App Secret)
+# Application Secrets (Admin Password, App Secret)
 # ==============================================================================
 
 resource "aws_secretsmanager_secret" "app_secrets" {
@@ -12,7 +12,6 @@ resource "aws_secretsmanager_secret_version" "app_secrets_version" {
   secret_string = jsonencode({
     APP_SECRET_KEY          = "replace-me-in-aws-console"
     ADMIN_PASSWORD          = "replace-me-in-aws-console"
-    GOOGLE_CREDENTIALS_JSON = "{}"
   })
 
   lifecycle {

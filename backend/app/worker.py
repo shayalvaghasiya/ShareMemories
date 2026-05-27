@@ -84,7 +84,7 @@ def process_photo_task(photo_id: int, file_path: str):
             db.commit()
             return f"Error: Could not decode image for photo {photo_id}"
 
-        # Optimization: Resize image if it's still too large (e.g. if it came from Drive or manual upload)
+        # Optimization: Resize image if it's still too large (e.g. from manual upload or S3)
         max_dim = 800
         h, w = img.shape[:2]
         if max(h, w) > max_dim:

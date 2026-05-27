@@ -228,10 +228,6 @@ resource "aws_ecs_task_definition" "backend" {
                 {
                     name      = "ADMIN_PASSWORD"
                     valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:ADMIN_PASSWORD::"
-                },
-                {
-                    name      = "GOOGLE_CREDENTIALS_JSON"
-                    valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:GOOGLE_CREDENTIALS_JSON::"
                 }
             ]
         }
@@ -343,10 +339,6 @@ resource "aws_ecs_task_definition" "worker" {
                 {
                     name      = "ADMIN_PASSWORD"
                     valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:ADMIN_PASSWORD::"
-                },
-                {
-                    name      = "GOOGLE_CREDENTIALS_JSON"
-                    valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:GOOGLE_CREDENTIALS_JSON::"
                 }
             ]
         }
