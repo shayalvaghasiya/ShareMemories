@@ -67,6 +67,15 @@ resource "aws_security_group" "ecs_sg" {
         protocol    = "tcp"
         security_groups = [aws_security_group.alb_sg.id]
     }
+    
+    # Next.js Frontend
+    ingress {
+        description = "Only allow traffic on port 3000 if it physically came from the Load Balancer"
+        from_port   = 3000
+        to_port     = 3000
+        protocol    = "tcp"
+        security_groups = [aws_security_group.alb_sg.id]
+    }
 
     # Outbound (Egress)
     egress {
