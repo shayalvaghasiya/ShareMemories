@@ -59,7 +59,7 @@ jobs:
           context: ./frontend
           push: true
           build-args: |
-            NEXT_PUBLIC_API_URL=https://api.sharememories.app
+            NEXT_PUBLIC_API_URL=https://api-aws.sharememories.app
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:${{ github.sha }}

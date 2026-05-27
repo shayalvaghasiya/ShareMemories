@@ -26,15 +26,6 @@ resource "aws_security_group" "alb_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Custom Backend Port
-  ingress {
-    description = "HTTP for Backend API"
-    from_port   = 8000
-    to_port     = 8000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   # Outbound (Egress) - Allow the ALB to send traffic anywhere
   egress {
     from_port   = 0

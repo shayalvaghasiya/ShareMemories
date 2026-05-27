@@ -39,21 +39,43 @@ resource "aws_lb_listener" "http" {
   protocol = "HTTP"
 
   default_action {
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+# HTTPS Listener (Port 443)
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.alb.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-2016-08"
+  certificate_arn   = aws_acm_certificate_validation.cert_validation.certificate_arn
+
+  # Default action: route to frontend
+  default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.frontend_target_group.arn
   }
 }
 
+# Route api.sharememories.app traffic to the backend target group
+resource "aws_lb_listener_rule" "api_routing" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 100
 
-# backend listner 
-resource "aws_lb_listener" "backend_http" {
-  load_balancer_arn = aws_lb.alb.arn
-
-  port     = 8000
-  protocol = "HTTP"
-
-  default_action {
+  action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.backend_target_group.arn
+  }
+
+  condition {
+    host_header {
+      values = ["api-aws.sharememories.app"]
+    }
   }
 }
