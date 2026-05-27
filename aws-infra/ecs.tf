@@ -35,6 +35,47 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# The Task Role: Allows the running containers to call AWS APIs (like S3)
+resource "aws_iam_role" "ecs_task_role" {
+  name = "sharememories-ecs-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "ecs_s3_policy" {
+  name = "ecs-s3-policy"
+  role = aws_iam_role.ecs_task_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.photos.arn,
+          "${aws_s3_bucket.photos.arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
 # Allow ECS Execution Role to read the RDS Secret
 resource "aws_iam_role_policy" "ecs_secrets_policy" {
   name = "ecs-secrets-policy"
@@ -131,6 +172,7 @@ resource "aws_ecs_task_definition" "backend" {
     cpu = 256
     memory = 512
     execution_role_arn = aws_iam_role.ecs_execution_role.arn
+    task_role_arn      = aws_iam_role.ecs_task_role.arn
 
     # 1. Define the EFS Volume mapping
     volume {
@@ -165,7 +207,8 @@ resource "aws_ecs_task_definition" "backend" {
             environment = [
                 { name = "REDIS_URL", value = "redis://${aws_elasticache_cluster.redis_cluster.cache_nodes[0].address}:6379/0" },
                 { name = "DB_HOST", value = aws_db_instance.RDS_instance.address },
-                { name = "DB_NAME", value = aws_db_instance.RDS_instance.db_name }
+                { name = "DB_NAME", value = aws_db_instance.RDS_instance.db_name },
+                { name = "S3_BUCKET_NAME", value = aws_s3_bucket.photos.bucket }
             ]
             
             # 4. Securely fetch secrets from AWS Secrets Manager
@@ -251,6 +294,7 @@ resource "aws_ecs_task_definition" "worker" {
     cpu = 256
     memory = 512
     execution_role_arn = aws_iam_role.ecs_execution_role.arn
+    task_role_arn      = aws_iam_role.ecs_task_role.arn
 
     volume {
         name = "efs-storage"
@@ -279,7 +323,8 @@ resource "aws_ecs_task_definition" "worker" {
             environment = [
                 { name = "REDIS_URL", value = "redis://${aws_elasticache_cluster.redis_cluster.cache_nodes[0].address}:6379/0" },
                 { name = "DB_HOST", value = aws_db_instance.RDS_instance.address },
-                { name = "DB_NAME", value = aws_db_instance.RDS_instance.db_name }
+                { name = "DB_NAME", value = aws_db_instance.RDS_instance.db_name },
+                { name = "S3_BUCKET_NAME", value = aws_s3_bucket.photos.bucket }
             ]
             
             secrets = [
