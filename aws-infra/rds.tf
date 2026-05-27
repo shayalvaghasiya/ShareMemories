@@ -18,7 +18,7 @@ resource "aws_db_instance" "RDS_instance" {
   engine_version       = "15"
   allocated_storage    =  20
   instance_class       = "db.t3.micro"
-  username             = "admin"
+  username             = "dbadmin"
   manage_master_user_password = true
   parameter_group_name = "default.postgres15"
   skip_final_snapshot  = true

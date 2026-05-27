@@ -35,47 +35,6 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# The Task Role: Allows the running containers to call AWS APIs (like S3)
-resource "aws_iam_role" "ecs_task_role" {
-  name = "sharememories-ecs-task-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "ecs-tasks.amazonaws.com"
-        }
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "ecs_s3_policy" {
-  name = "ecs-s3-policy"
-  role = aws_iam_role.ecs_task_role.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:DeleteObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          aws_s3_bucket.photos.arn,
-          "${aws_s3_bucket.photos.arn}/*"
-        ]
-      }
-    ]
-  })
-}
-
 # Allow ECS Execution Role to read the RDS Secret
 resource "aws_iam_role_policy" "ecs_secrets_policy" {
   name = "ecs-secrets-policy"
@@ -136,6 +95,16 @@ resource "aws_ecs_service" "frontend" {
         container_name = "frontend"
         container_port = 3000
     }
+
+    # Allow GitHub Actions and Auto-Scaling to manage updates without Terraform reverting them
+    lifecycle {
+        ignore_changes = [task_definition, desired_count]
+    }
+
+    # Ensure the Load Balancer Listener is fully created and attached to the Target Group first
+    depends_on = [
+      aws_lb_listener.https
+    ]
 }
 
 # Auto-scaling for Frontend Service
@@ -172,7 +141,6 @@ resource "aws_ecs_task_definition" "backend" {
     cpu = 256
     memory = 512
     execution_role_arn = aws_iam_role.ecs_execution_role.arn
-    task_role_arn      = aws_iam_role.ecs_task_role.arn
 
     # 1. Define the EFS Volume mapping
     volume {
@@ -207,8 +175,7 @@ resource "aws_ecs_task_definition" "backend" {
             environment = [
                 { name = "REDIS_URL", value = "redis://${aws_elasticache_cluster.redis_cluster.cache_nodes[0].address}:6379/0" },
                 { name = "DB_HOST", value = aws_db_instance.RDS_instance.address },
-                { name = "DB_NAME", value = aws_db_instance.RDS_instance.db_name },
-                { name = "S3_BUCKET_NAME", value = aws_s3_bucket.photos.bucket }
+                { name = "DB_NAME", value = aws_db_instance.RDS_instance.db_name }
             ]
             
             # 4. Securely fetch secrets from AWS Secrets Manager
@@ -228,6 +195,10 @@ resource "aws_ecs_task_definition" "backend" {
                 {
                     name      = "ADMIN_PASSWORD"
                     valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:ADMIN_PASSWORD::"
+                },
+                {
+                    name      = "GOOGLE_CREDENTIALS_JSON"
+                    valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:GOOGLE_CREDENTIALS_JSON::"
                 }
             ]
         }
@@ -251,6 +222,16 @@ resource "aws_ecs_service" "backend" {
         container_name = "backend"
         container_port = 8000
     }
+
+    # Allow GitHub Actions and Auto-Scaling to manage updates without Terraform reverting them
+    lifecycle {
+        ignore_changes = [task_definition, desired_count]
+    }
+
+    # Ensure the Load Balancer Rule is fully created and attached to the Target Group first
+    depends_on = [
+      aws_lb_listener_rule.api_routing
+    ]
 }
 
 # Auto-scaling for Backend Service
@@ -290,7 +271,6 @@ resource "aws_ecs_task_definition" "worker" {
     cpu = 256
     memory = 512
     execution_role_arn = aws_iam_role.ecs_execution_role.arn
-    task_role_arn      = aws_iam_role.ecs_task_role.arn
 
     volume {
         name = "efs-storage"
@@ -319,8 +299,7 @@ resource "aws_ecs_task_definition" "worker" {
             environment = [
                 { name = "REDIS_URL", value = "redis://${aws_elasticache_cluster.redis_cluster.cache_nodes[0].address}:6379/0" },
                 { name = "DB_HOST", value = aws_db_instance.RDS_instance.address },
-                { name = "DB_NAME", value = aws_db_instance.RDS_instance.db_name },
-                { name = "S3_BUCKET_NAME", value = aws_s3_bucket.photos.bucket }
+                { name = "DB_NAME", value = aws_db_instance.RDS_instance.db_name }
             ]
             
             secrets = [
@@ -339,6 +318,10 @@ resource "aws_ecs_task_definition" "worker" {
                 {
                     name      = "ADMIN_PASSWORD"
                     valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:ADMIN_PASSWORD::"
+                },
+                {
+                    name      = "GOOGLE_CREDENTIALS_JSON"
+                    valueFrom = "${aws_secretsmanager_secret.app_secrets.arn}:GOOGLE_CREDENTIALS_JSON::"
                 }
             ]
         }
@@ -357,6 +340,11 @@ resource "aws_ecs_service" "worker" {
         assign_public_ip = false
     }
     # Notice: No load_balancer block here!
+
+    # Allow GitHub Actions and Auto-Scaling to manage updates without Terraform reverting them
+    lifecycle {
+        ignore_changes = [task_definition, desired_count]
+    }
 }
 
 # Auto-scaling for Worker Service
