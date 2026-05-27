@@ -3,7 +3,7 @@ name: CI/CD Pipeline
 on:
   push:
     # Trigger this workflow ONLY when pushing to the new AWS branch
-    branches: [ "feature/aws-deployment" ]
+    branches: [ "aws-deployment" ]
   workflow_dispatch: # Allows you to trigger the deployment manually from the GitHub UI
 
 env:
