@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .database import SessionLocal
 from . import models
 import boto3
+from botocore.config import Config
 from .image_utils import decode_image_bytes, load_image_from_path
 
 # Initialize Celery
@@ -53,7 +54,7 @@ def process_photo_task(photo_id: int, file_path: str):
         if img is None and file_path:
             # Fetch original high-res image directly from S3 into memory
             try:
-                s3_client = boto3.client('s3')
+                s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
                 bucket_name = os.getenv("S3_BUCKET_NAME")
                 obj = s3_client.get_object(Bucket=bucket_name, Key=file_path)
                 img = decode_image_bytes(obj['Body'].read())

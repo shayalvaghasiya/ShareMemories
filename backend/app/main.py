@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel
 import boto3
+from botocore.config import Config
 from . import models, schemas, database
 from .image_utils import decode_image_bytes, encode_jpeg_bytes, looks_like_heic
 
@@ -533,7 +534,7 @@ def download_photo(
             verify_admin(api_key)
 
         if photo.file_path:
-            s3_client = boto3.client('s3')
+            s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
             bucket_name = os.getenv("S3_BUCKET_NAME")
             url = s3_client.generate_presigned_url(
                 'get_object',
@@ -584,7 +585,7 @@ def download_photos_zip(
         raise HTTPException(status_code=404, detail="No photos found")
         
     def zip_generator():
-        s3_client = boto3.client('s3')
+        s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
         bucket_name = os.getenv("S3_BUCKET_NAME")
         now = datetime.now()
         
@@ -624,7 +625,7 @@ def upload_photos(
     
     saved_photos = []
     new_photos = []
-    s3_client = boto3.client('s3')
+    s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
     bucket_name = os.getenv("S3_BUCKET_NAME")
     
     try:
@@ -683,7 +684,7 @@ def get_presigned_urls(event_id: int, request: PresignedUrlRequest, db: Session 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    s3_client = boto3.client('s3')
+    s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
     bucket_name = os.getenv("S3_BUCKET_NAME")
     
     urls = []
@@ -747,7 +748,7 @@ def delete_photo(photo_id: int, db: Session = Depends(database.get_db)):
         raise HTTPException(status_code=404, detail="Photo not found")
     try:
         if photo.file_path:
-            s3_client = boto3.client('s3')
+            s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
             s3_client.delete_object(Bucket=os.getenv("S3_BUCKET_NAME"), Key=photo.file_path)
             
         if photo.thumbnail_path:
