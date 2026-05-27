@@ -4,6 +4,11 @@
 
 resource "aws_ecs_cluster" "main" {
   name = "sharememories-cluster"
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
 }
 
 # The Execution Role: Allows ECS to pull images from ECR and write logs to CloudWatch
@@ -113,6 +118,8 @@ resource "aws_appautoscaling_policy" "frontend_cpu" {
       predefined_metric_type = "ECSServiceAverageCPUUtilization"
     }
     target_value = 70.0
+    scale_in_cooldown  = 300 # Wait 5 mins (300s) after traffic drops to terminate containers
+    scale_out_cooldown = 60  # Wait 1 min (60s) after a spike before adding MORE containers
   }
 }
 
@@ -228,6 +235,8 @@ resource "aws_appautoscaling_policy" "backend_cpu" {
       predefined_metric_type = "ECSServiceAverageCPUUtilization"
     }
     target_value = 70.0
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
   }
 }
 
