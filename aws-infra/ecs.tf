@@ -182,8 +182,8 @@ resource "aws_ecs_task_definition" "backend" {
     family = "backend-task"
     network_mode = "awsvpc"
     requires_compatibilities = ["FARGATE"]
-    cpu = 256
-    memory = 512
+    cpu = 1024
+    memory = 4096
     execution_role_arn = aws_iam_role.ecs_execution_role.arn
     task_role_arn      = aws_iam_role.ecs_task_role.arn
 
@@ -309,8 +309,8 @@ resource "aws_ecs_task_definition" "worker" {
     family = "worker-task"
     network_mode = "awsvpc"
     requires_compatibilities = ["FARGATE"]
-    cpu = 256
-    memory = 512
+    cpu = 1024
+    memory = 4096
     execution_role_arn = aws_iam_role.ecs_execution_role.arn
     task_role_arn      = aws_iam_role.ecs_task_role.arn
 
@@ -328,7 +328,7 @@ resource "aws_ecs_task_definition" "worker" {
             image = "${aws_ecr_repository.backend.repository_url}:latest"
             
             # Override the command to start the Celery worker
-            command = ["celery", "-A", "app.worker.celery", "worker", "--loglevel=info", "--concurrency=4"]
+            command = ["celery", "-A", "app.worker.celery", "worker", "--loglevel=info", "--concurrency=1"]
             
             mountPoints = [
                 {
