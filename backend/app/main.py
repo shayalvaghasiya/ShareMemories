@@ -117,11 +117,16 @@ frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_url, "http://localhost:3000"], 
+    allow_origins=[
+        frontend_url, 
+        "http://localhost:3000",
+        "https://sharememories.app",
+        "https://aws.sharememories.app"
+    ], 
     allow_origin_regex=r"https://.*\.app\.github\.dev",
     allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_methods=["*"],
+    allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
 
