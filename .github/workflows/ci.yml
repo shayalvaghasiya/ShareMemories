@@ -51,8 +51,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/sharememories-backend:latest
-            ${{ steps.login-ecr.outputs.registry }}/sharememories-backend:${{ github.sha }}
+            
+          #  ${{ steps.login-ecr.outputs.registry }}/sharememories-backend:latest
+          # ${{ steps.login-ecr.outputs.registry }}/sharememories-backend:${{ github.sha }}
 
       - name: Build and push Frontend Image
         uses: docker/build-push-action@v4
@@ -64,8 +65,9 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/sharememories-frontend:latest
-            ${{ steps.login-ecr.outputs.registry }}/sharememories-frontend:${{ github.sha }}
+          
+          # ${{ steps.login-ecr.outputs.registry }}/sharememories-frontend:latest
+          # ${{ steps.login-ecr.outputs.registry }}/sharememories-frontend:${{ github.sha }}
 
   # deploy-aws-dev:
   #   needs: build-and-push
