@@ -16,8 +16,8 @@ resource "aws_db_instance" "RDS_instance" {
   db_name              = "wedding_db"
   engine               = "postgres"
   engine_version       = "15"
-  allocated_storage    =  20
-  instance_class       = "db.t3.micro"
+  allocated_storage    = var.rds_allocated_storage
+  instance_class       = var.rds_instance_class
   username             = "dbadmin"
   manage_master_user_password = true
   parameter_group_name = "default.postgres15"

@@ -107,8 +107,8 @@ resource "aws_ecs_task_definition" "frontend" {
     family = "frontend-task"
     network_mode = "awsvpc"
     requires_compatibilities = ["FARGATE"]
-    cpu = 256
-    memory = 512
+    cpu = var.frontend_cpu
+    memory = var.frontend_memory
     execution_role_arn = aws_iam_role.ecs_execution_role.arn
     container_definitions = jsonencode([
         {
@@ -137,7 +137,7 @@ resource "aws_ecs_service" "frontend" {
     name = "frontend-service"
     cluster = aws_ecs_cluster.main.id
     task_definition = aws_ecs_task_definition.frontend.arn
-    desired_count = 1
+    desired_count = var.frontend_desired_count
     launch_type = "FARGATE"
     network_configuration {
         subnets = [aws_subnet.private_zone_1.id, aws_subnet.private_zone_2.id]
@@ -153,8 +153,8 @@ resource "aws_ecs_service" "frontend" {
 
 # Auto-scaling for Frontend Service
 resource "aws_appautoscaling_target" "frontend" {
-  max_capacity       = 3
-  min_capacity       = 1
+  max_capacity       = var.frontend_max_capacity
+  min_capacity       = var.frontend_min_capacity
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.frontend.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
@@ -182,8 +182,8 @@ resource "aws_ecs_task_definition" "backend" {
     family = "backend-task"
     network_mode = "awsvpc"
     requires_compatibilities = ["FARGATE"]
-    cpu = 1024
-    memory = 4096
+    cpu = var.backend_cpu
+    memory = var.backend_memory
     execution_role_arn = aws_iam_role.ecs_execution_role.arn
     task_role_arn      = aws_iam_role.ecs_task_role.arn
 
@@ -222,7 +222,7 @@ resource "aws_ecs_task_definition" "backend" {
                 { name = "DB_HOST", value = aws_db_instance.RDS_instance.address },
                 { name = "DB_NAME", value = aws_db_instance.RDS_instance.db_name },
                 { name = "S3_BUCKET_NAME", value = aws_s3_bucket.photos.bucket },
-                { name = "FRONTEND_URL", value = "https://aws.sharememories.app" }
+                { name = "FRONTEND_URL", value = "https://${var.frontend_domain}" }
             ]
             
             # 4. Securely fetch secrets from AWS Secrets Manager
@@ -261,7 +261,7 @@ resource "aws_ecs_service" "backend" {
     name = "backend-service"
     cluster = aws_ecs_cluster.main.id
     task_definition = aws_ecs_task_definition.backend.arn
-    desired_count = 1
+    desired_count = var.backend_desired_count
     launch_type = "FARGATE"
     network_configuration {
         subnets = [aws_subnet.private_zone_1.id, aws_subnet.private_zone_2.id]
@@ -277,8 +277,8 @@ resource "aws_ecs_service" "backend" {
 
 # Auto-scaling for Backend Service
 resource "aws_appautoscaling_target" "backend" {
-  max_capacity       = 5
-  min_capacity       = 1
+  max_capacity       = var.backend_max_capacity
+  min_capacity       = var.backend_min_capacity
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.backend.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
@@ -309,8 +309,8 @@ resource "aws_ecs_task_definition" "worker" {
     family = "worker-task"
     network_mode = "awsvpc"
     requires_compatibilities = ["FARGATE"]
-    cpu = 1024
-    memory = 4096
+    cpu = var.worker_cpu
+    memory = var.worker_memory
     execution_role_arn = aws_iam_role.ecs_execution_role.arn
     task_role_arn      = aws_iam_role.ecs_task_role.arn
 
@@ -343,7 +343,7 @@ resource "aws_ecs_task_definition" "worker" {
                 { name = "DB_HOST", value = aws_db_instance.RDS_instance.address },
                 { name = "DB_NAME", value = aws_db_instance.RDS_instance.db_name },
                 { name = "S3_BUCKET_NAME", value = aws_s3_bucket.photos.bucket },
-                { name = "FRONTEND_URL", value = "https://aws.sharememories.app" }
+                { name = "FRONTEND_URL", value = "https://${var.frontend_domain}" }
             ]
             
             secrets = [
@@ -380,7 +380,7 @@ resource "aws_ecs_service" "worker" {
     name = "worker-service"
     cluster = aws_ecs_cluster.main.id
     task_definition = aws_ecs_task_definition.worker.arn
-    desired_count = 1
+    desired_count = var.worker_desired_count
     launch_type = "FARGATE"
     network_configuration {
         subnets = [aws_subnet.private_zone_1.id, aws_subnet.private_zone_2.id]
@@ -394,8 +394,8 @@ resource "aws_ecs_service" "worker" {
 # Note: Scaling based on CPU is a good start. A more advanced setup would scale
 # based on the number of messages in the Redis (Celery) queue.
 resource "aws_appautoscaling_target" "worker" {
-  max_capacity       = 10
-  min_capacity       = 1
+  max_capacity       = var.worker_max_capacity
+  min_capacity       = var.worker_min_capacity
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.worker.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"

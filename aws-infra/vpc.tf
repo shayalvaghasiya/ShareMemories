@@ -3,7 +3,7 @@
 # having 2 AZ and 4 subnets, a internet gateway, a route table 
 
 resource "aws_vpc" "main" {
-  cidr_block = local.vpc_cidr   
+  cidr_block = var.vpc_cidr   
 
 # DNS support is required for ECS to resolve service names to IP addresses
   enable_dns_support   = true
@@ -19,22 +19,22 @@ resource "aws_vpc" "main" {
 resource "aws_subnet" "public_zone_1" {
     vpc_id = aws_vpc.main.id
     cidr_block = "10.0.1.0/24"
-    availability_zone = local.zones[0]
+    availability_zone = var.availability_zones[0]
     map_public_ip_on_launch = true
 
     tags = {
-        Name = "sharememories-public-${local.zones[0]}"
+        Name = "sharememories-public-${var.availability_zones[0]}"
     }
 }
 
 resource "aws_subnet" "public_zone_2" {
     vpc_id = aws_vpc.main.id
     cidr_block = "10.0.2.0/24"
-    availability_zone = local.zones[1]
+    availability_zone = var.availability_zones[1]
     map_public_ip_on_launch = true
 
     tags = {
-        Name = "sharememories-public-${local.zones[1]}"
+        Name = "sharememories-public-${var.availability_zones[1]}"
     }
 }
 
@@ -43,20 +43,20 @@ resource "aws_subnet" "public_zone_2" {
 resource "aws_subnet" "private_zone_1" {
     vpc_id = aws_vpc.main.id
     cidr_block = "10.0.3.0/24"
-    availability_zone = local.zones[0]
+    availability_zone = var.availability_zones[0]
 
     tags = {
-        Name = "sharememories-private-${local.zones[0]}"
+        Name = "sharememories-private-${var.availability_zones[0]}"
     }
 }
 
 resource "aws_subnet" "private_zone_2" {
     vpc_id = aws_vpc.main.id
     cidr_block = "10.0.4.0/24"
-    availability_zone = local.zones[1]
+    availability_zone = var.availability_zones[1]
 
     tags = {
-        Name = "sharememories-private-${local.zones[1]}"
+        Name = "sharememories-private-${var.availability_zones[1]}"
     }
 }
 

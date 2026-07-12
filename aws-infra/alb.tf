@@ -75,7 +75,7 @@ resource "aws_lb_listener_rule" "api_routing" {
 
   condition {
     host_header {
-      values = ["api-aws.sharememories.app"]
+      values = [var.api_domain]
     }
   }
 }

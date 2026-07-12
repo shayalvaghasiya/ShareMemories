@@ -24,7 +24,7 @@ resource "aws_s3_bucket_cors_configuration" "photos_cors" {
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["PUT", "POST"]
-    allowed_origins = ["*"] # In a strict production environment, specify your domain e.g., ["https://sharememories.app"]
+    allowed_origins = var.s3_cors_allowed_origins
     expose_headers  = ["ETag"]
     max_age_seconds = 3000
   }

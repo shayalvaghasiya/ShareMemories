@@ -1,7 +1,7 @@
 # Request the SSL Certificate
 resource "aws_acm_certificate" "cert" {
-  domain_name               = "sharememories.app"
-  subject_alternative_names = ["*.sharememories.app"]
+  domain_name               = var.root_domain
+  subject_alternative_names = ["*.${var.root_domain}"]
   validation_method         = "DNS"
 
   tags = {
