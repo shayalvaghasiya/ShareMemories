@@ -3,7 +3,7 @@ name: CI/CD Pipeline
 on:
   push:
     # Trigger this workflow ONLY when pushing to the new AWS branch
-    branches: 
+    branches:
       - aws-deployment
   workflow_dispatch: # Allows you to trigger the deployment manually from the GitHub UI
 
@@ -36,6 +36,11 @@ jobs:
       #   id: login-ecr
       #   uses: aws-actions/amazon-ecr-login@v1
 
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
       - name: Log in to the Container registry
         uses: docker/login-action@v2
         with:
@@ -51,7 +56,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:${{ github.sha }}
-            
+
           #  ${{ steps.login-ecr.outputs.registry }}/sharememories-backend:latest
           # ${{ steps.login-ecr.outputs.registry }}/sharememories-backend:${{ github.sha }}
 
@@ -65,7 +70,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:${{ github.sha }}
-          
+
           # ${{ steps.login-ecr.outputs.registry }}/sharememories-frontend:latest
           # ${{ steps.login-ecr.outputs.registry }}/sharememories-frontend:${{ github.sha }}
 
@@ -79,7 +84,7 @@ jobs:
   #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
   #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   #         aws-region: ${{ env.AWS_REGION }}
-          
+
   #     - name: Deploy to Amazon ECS
   #       run: |
   #         echo "Forcing ECS to pull the new images and restart..."
