@@ -73,9 +73,9 @@ export default function AdminPage() {
   const [newEventName, setNewEventName] = useState("");
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [eventPhotos, setEventPhotos] = useState<Photo[]>([]);
-  const [folderUrl, setFolderUrl] = useState("");
-  const [syncing, setSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState({ active: false, current: 0, total: 0 });
+  const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [previewUploading, setPreviewUploading] = useState(false);
   const [previewRefreshKey, setPreviewRefreshKey] = useState(Date.now());
   const [statusMessage, setStatusMessage] = useState("");
@@ -88,6 +88,7 @@ export default function AdminPage() {
   const [reseting, setReseting] = useState(false);
   const [importMessage, setImportMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   // Visitors State
   const [visitors, setVisitors] = useState<Visitor[]>([]);
@@ -175,76 +176,76 @@ export default function AdminPage() {
     }
   };
 
-  const handleSyncDrive = async () => {
-    if (!folderUrl.trim() || !selectedEvent) return;
+  const handleDirectUpload = async () => {
+    if (!selectedEvent) return alert("Please select an event first.");
+    if (!selectedFiles || selectedFiles.length === 0) return alert("Please select photos to upload.");
 
-    setSyncing(true);
-    setStatusMessage("Starting sync initialization...");
-    setSyncProgress({ active: true, current: 0, total: 100 });
+    setIsUploading(true);
+    setUploadProgress(0);
+    setStatusMessage("Preparing upload...");
+
+    const filesArray = Array.from(selectedFiles);
+    const fileInfos = filesArray.map(f => ({
+      filename: f.name,
+      content_type: f.type || "application/octet-stream"
+    }));
 
     try {
-      const response = await axios.post(`${apiUrl}/events/${getEventId(selectedEvent)}/sync-drive`, {
-        folder_url: folderUrl
-      }, { headers: { "X-API-Key": password } });
+      // 1. Get Pre-Signed URLs from backend
+      setStatusMessage("Requesting secure upload links...");
+      const presignedRes = await axios.post(
+        `${apiUrl}/events/${getEventId(selectedEvent)}/presigned-urls`,
+        { files: fileInfos },
+        { headers: { "X-API-Key": password } }
+      );
 
-      const { new_found, total_found } = response.data;
+      const uploadTasks = presignedRes.data.urls;
+      const s3Keys: string[] = [];
+      let completed = 0;
 
-      if (new_found === 0) {
-        setStatusMessage(`All ${total_found} images in the folder are already synced.`);
-        setSyncProgress({ active: false, current: 0, total: 0 });
-        setSyncing(false);
-        setFolderUrl("");
-        return;
+      // 2. Upload directly to S3 in batches to prevent browser network exhaustion
+      setStatusMessage("Uploading directly to S3...");
+      const BATCH_SIZE = 5; // Upload 5 photos concurrently
+
+      for (let i = 0; i < uploadTasks.length; i += BATCH_SIZE) {
+        const batch = uploadTasks.slice(i, i + BATCH_SIZE);
+        
+        await Promise.all(batch.map(async (task: any) => {
+          const file = filesArray.find(f => f.name === task.filename);
+          if (file) {
+            await axios.put(task.url, file, {
+              headers: { "Content-Type": file.type || "application/octet-stream" }
+            });
+            s3Keys.push(task.s3_key);
+          }
+          
+          completed++;
+          const percentCompleted = Math.round((completed * 100) / uploadTasks.length);
+          setUploadProgress(percentCompleted);
+          setStatusMessage(`Uploading... ${percentCompleted}% (${completed}/${uploadTasks.length})`);
+        }));
       }
 
-      setStatusMessage(`Syncing ${new_found} new photos...`);
-      setSyncProgress({ active: true, current: 0, total: new_found });
+      // 3. Confirm uploads with the backend to start AI processing
+      setStatusMessage("Confirming uploads & starting AI workers...");
+      const confirmRes = await axios.post(
+        `${apiUrl}/events/${getEventId(selectedEvent)}/confirm-uploads`,
+        { s3_keys: s3Keys },
+        { headers: { "X-API-Key": password } }
+      );
 
-      let currentPhotosCount = eventPhotos.length;
-      let targetCount = currentPhotosCount + new_found;
-      let consecutiveNoProgress = 0;
-      let lastCount = currentPhotosCount;
-
-      const interval = setInterval(async () => {
-        try {
-          const photosRes = await axios.get(`${apiUrl}/events/${getEventId(selectedEvent)}/photos`, { headers: { "X-API-Key": password } });
-          const newPhotos = photosRes.data;
-
-          setEventPhotos(newPhotos);
-
-          let syncedNow = newPhotos.length - currentPhotosCount;
-          if (syncedNow < 0) syncedNow = 0;
-
-          setSyncProgress(prev => ({ ...prev, current: syncedNow }));
-
-          if (newPhotos.length === lastCount) {
-            consecutiveNoProgress++;
-          } else {
-            consecutiveNoProgress = 0;
-            lastCount = newPhotos.length;
-          }
-
-          if (newPhotos.length >= targetCount || consecutiveNoProgress > 20) {
-            clearInterval(interval);
-            setSyncProgress({ active: false, current: 0, total: 0 });
-            setSyncing(false);
-            setFolderUrl("");
-            if (newPhotos.length >= targetCount) {
-              setStatusMessage(`Sync complete! Successfully imported ${new_found} new photos.`);
-            } else {
-              setStatusMessage(`Sync paused or encountered errors. Imported ${syncedNow} photos.`);
-            }
-          }
-        } catch (e) {
-          console.error("Polling error", e);
-        }
-      }, 2000);
-
-    } catch (error) {
-      console.error("Sync failed", error);
-      setStatusMessage("Error: Failed to initiate Google Drive sync.");
-      setSyncing(false);
-      setSyncProgress({ active: false, current: 0, total: 0 });
+      setStatusMessage(`Successfully uploaded and queued ${confirmRes.data.photo_ids?.length || s3Keys.length} photos!`);
+      setSelectedFiles(null);
+      if (photoInputRef.current) photoInputRef.current.value = "";
+      
+      fetchEventPhotos(getEventId(selectedEvent));
+      fetchDbStatus();
+    } catch (error: any) {
+      console.error("Upload failed", error);
+      setStatusMessage(`Error: ${error.response?.data?.detail || "Failed to upload photos."}`);
+    } finally {
+      setIsUploading(false);
+      setTimeout(() => setUploadProgress(0), 2000);
     }
   };
 
@@ -804,39 +805,45 @@ export default function AdminPage() {
               </label>
             </div>
 
-            {/* Sync Area */}
+            {/* Upload Area */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <h2 className="text-lg font-semibold mb-4">Sync from Google Drive</h2>
+              <h2 className="text-lg font-semibold mb-4">Upload Event Photos</h2>
               <div className="flex flex-col gap-4">
-                <p className="text-sm text-slate-500">Paste a Google Drive Folder Link to automatically import all images.</p>
+                <p className="text-sm text-slate-500">Select and upload multiple photos directly to the event.</p>
                 <input
-                  type="text"
-                  value={folderUrl}
-                  onChange={(e) => setFolderUrl(e.target.value)}
-                  placeholder="https://drive.google.com/drive/folders/..."
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                  disabled={syncing}
+                  type="file"
+                  multiple
+                  accept="image/*,.heic,.heif"
+                  ref={photoInputRef}
+                  onChange={(e) => setSelectedFiles(e.target.files)}
+                  disabled={isUploading}
+                  className="block w-full text-sm text-slate-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-full file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-indigo-50 file:text-indigo-700
+                    hover:file:bg-indigo-100 cursor-pointer"
                 />
 
                 <button
-                  onClick={handleSyncDrive}
-                  disabled={!folderUrl.trim() || syncing}
+                  onClick={handleDirectUpload}
+                  disabled={!selectedFiles || selectedFiles.length === 0 || isUploading}
                   className="w-full bg-indigo-600 text-white px-6 py-3 rounded-xl hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 font-semibold transition-all shadow-sm active:scale-95"
                 >
-                  {syncing ? "Sync in Progress..." : "Sync Folder"}
+                  {isUploading ? `Uploading (${uploadProgress}%)` : "Upload Photos"}
                 </button>
               </div>
 
-              {syncProgress.active && syncProgress.total > 0 && (
+              {isUploading && (
                 <div className="mt-6">
                   <div className="flex justify-between text-sm text-slate-600 mb-2 font-medium">
-                    <span>Importing Photos...</span>
-                    <span>{syncProgress.current} / {syncProgress.total}</span>
+                    <span>Uploading to S3...</span>
+                    <span>{uploadProgress}%</span>
                   </div>
                   <div className="w-full bg-slate-100 rounded-full h-3">
                     <div
                       className="bg-indigo-600 h-3 rounded-full transition-all duration-300 ease-out"
-                      style={{ width: `${Math.min(100, (syncProgress.current / syncProgress.total) * 100)}%` }}
+                      style={{ width: `${uploadProgress}%` }}
                     ></div>
                   </div>
                 </div>

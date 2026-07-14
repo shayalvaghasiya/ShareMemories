@@ -9,7 +9,9 @@ An AI-powered web application that allows wedding guests to find all their photo
 - **AI Processing**: Automatically detects faces and generates 512-dimensional embeddings using `InsightFace`.
 - **Vector Search**: Uses PostgreSQL `pgvector` for ultra-fast cosine similarity searching.
 - **Privacy-Focused**: Guests only see photos they appear in.
-- **Self-Hosted**: Images are stored in your google drive.
+- **Enterprise Cloud Storage**: Images are natively streamed and stored securely in Amazon S3.
+- **High Availability & Scalability**: Deployed on AWS ECS Fargate with Target Tracking Auto-Scaling.
+- **Zero-Trust Security**: Utilizes Private VPC subnets, AWS Secrets Manager, and an Application Load Balancer.
 
 
 ## 🛠️ Tech Stack
@@ -25,26 +27,26 @@ An AI-powered web application that allows wedding guests to find all their photo
 - **Image Processing**: OpenCV, NumPy
 - **Task Queue**: Celery + Redis (for background photo indexing)
 
-### Database & Infrastructure
-- **Database**: PostgreSQL 16 + `pgvector` extension
-- **Containerization**: Docker & Docker Compose
-- **CI/CD**: GitHub Actions & GitHub Container Registry (GHCR)
-- **Reverse Proxy**: Caddy (Automatic HTTPS)
+### AWS Infrastructure & DevOps
+- **Compute**: Amazon ECS (Fargate Serverless Containers)
+- **Database**: Amazon RDS PostgreSQL 15 + `pgvector` extension
+- **Cache & Message Broker**: Amazon ElastiCache (Redis)
+- **Storage**: Amazon S3 (Raw Photos) & Amazon EFS (Shared Volumes for Thumbnails)
+- **Networking**: Custom VPC, Public/Private Subnets, NAT Gateway, Application Load Balancer (ALB)
+- **Observability**: Amazon CloudWatch Dashboards & Container Insights
+- **CI/CD & IaC**: GitHub Actions, Amazon ECR, and Terraform
 ---
 
-## 🚀 Production Deployment Guide
+## 🚀 AWS Production Deployment Guide
 
-This project is configured for automated Continuous Deployment (CD) using GitHub Actions.
+This branch uses **Terraform** for Infrastructure as Code (IaC) and **GitHub Actions** for Continuous Deployment (CI/CD) to AWS. 
 
-### Step 1: Server Preparation
-SSH into your Ubuntu VM and install Docker. Then, prepare the necessary network and storage directories:
+### Step 1: Bootstrap Container Registries
+To solve the "Chicken and Egg" problem where ECS requires Docker images to launch, we first provision only the Amazon ECR repositories.
 ```bash
-# Create a custom Docker network for container communication
-docker network create sharememories_net
-
-# Create application directories
-mkdir -p /opt/ShareMemories/storage
-mkdir -p /opt/caddy
+cd aws-infra
+terraform init
+terraform apply -target="aws_ecr_repository.frontend" -target="aws_ecr_repository.backend"
 ```
 
 ### Step 2: Configure Environment Variables
@@ -58,7 +60,6 @@ DATABASE_URL="postgresql://admin:postgres%40admin@wedding_db:5432/wedding_db"
 REDIS_URL="redis://wedding_redis:6379/0"
 ADMIN_PASSWORD="YourSecurePassword123"
 APP_SECRET_KEY="your-random-secret-key"
-GOOGLE_CREDENTIALS_JSON='{...}'
 ```
 
 ### Step 3: Start Stateful Services (Database & Redis)

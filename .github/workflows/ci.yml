@@ -2,12 +2,17 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    # Trigger this workflow ONLY when pushing to the new AWS branch
+    branches:
+      - aws-deployment
+  workflow_dispatch: # Allows you to trigger the deployment manually from the GitHub UI
 
 env:
   REGISTRY: ghcr.io
   # github.repository is usually "username/reponame"
   IMAGE_NAME: ${{ github.repository }}
+  # Replace with your actual AWS region and ECR repository names
+  AWS_REGION: us-east-1
 
 jobs:
   build-and-push:
@@ -19,6 +24,22 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
+      # - name: Configure AWS credentials
+      #   uses: aws-actions/configure-aws-credentials@v2
+      #   with:
+      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region: ${{ env.AWS_REGION }}
+
+      # - name: Login to Amazon ECR
+      #   id: login-ecr
+      #   uses: aws-actions/amazon-ecr-login@v1
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Log in to the Container registry
         uses: docker/login-action@v2
@@ -36,27 +57,37 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:${{ github.sha }}
 
+          #  ${{ steps.login-ecr.outputs.registry }}/sharememories-backend:latest
+          # ${{ steps.login-ecr.outputs.registry }}/sharememories-backend:${{ github.sha }}
+
       - name: Build and push Frontend Image
         uses: docker/build-push-action@v4
         with:
           context: ./frontend
           push: true
           build-args: |
-            NEXT_PUBLIC_API_URL=https://api.sharememories.app
+            NEXT_PUBLIC_API_URL=https://api-aws.sharememories.app
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:${{ github.sha }}
 
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    steps:
-      - name: SSH into Droplet and Deploy
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.DROPLET_IP }}
-          username: root
-          key: ${{ secrets.DROPLET_SSH_KEY }}
-          script: |
-            # Run the deployment script we created on the server
-            /opt/ShareMemories/deploy.sh
+          # ${{ steps.login-ecr.outputs.registry }}/sharememories-frontend:latest
+          # ${{ steps.login-ecr.outputs.registry }}/sharememories-frontend:${{ github.sha }}
+
+  # deploy-aws-dev:
+  #   needs: build-and-push
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Configure AWS credentials
+  #       uses: aws-actions/configure-aws-credentials@v2
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-region: ${{ env.AWS_REGION }}
+
+  #     - name: Deploy to Amazon ECS
+  #       run: |
+  #         echo "Forcing ECS to pull the new images and restart..."
+  #         aws ecs update-service --cluster sharememories-cluster --service frontend-service --force-new-deployment
+  #         aws ecs update-service --cluster sharememories-cluster --service backend-service --force-new-deployment
+  #         aws ecs update-service --cluster sharememories-cluster --service worker-service --force-new-deployment

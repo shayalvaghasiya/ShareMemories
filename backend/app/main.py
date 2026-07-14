@@ -20,13 +20,13 @@ from celery import Celery
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request, Form, BackgroundTasks, Security
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, RedirectResponse
 from insightface.app import FaceAnalysis
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from pydantic import BaseModel
-from google.oauth2 import service_account
-import google.auth.transport.requests
+import boto3
+from botocore.config import Config
 from . import models, schemas, database
 from .image_utils import decode_image_bytes, encode_jpeg_bytes, looks_like_heic
 
@@ -117,11 +117,16 @@ frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[frontend_url, "http://localhost:3000"], 
+    allow_origins=[
+        frontend_url, 
+        "http://localhost:3000",
+        "https://sharememories.app",
+        "https://aws.sharememories.app"
+    ], 
     allow_origin_regex=r"https://.*\.app\.github\.dev",
     allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_methods=["*"],
+    allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
 
@@ -277,6 +282,17 @@ def require_guest_event_access(event_id: int, access_token: str, db: Session) ->
     verify_guest_access_token(event_id, access_token)
     return event
 
+class PresignedFileInfo(BaseModel):
+    filename: str
+    content_type: str
+
+class PresignedUrlRequest(BaseModel):
+    files: List[PresignedFileInfo]
+
+class ConfirmUploadRequest(BaseModel):
+    s3_keys: List[str]
+
+
 # Global variable for InsightFace model
 app_face = None
 
@@ -288,21 +304,6 @@ def get_face_app():
         app_face.prepare(ctx_id=0, det_size=(640, 640))
         logger.info("InsightFace model loaded successfully.")
     return app_face
-
-def get_drive_token():
-    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-    if not creds_json:
-        raise ValueError("GOOGLE_CREDENTIALS_JSON environment variable is not set")
-    creds_dict = json.loads(creds_json)
-    
-    # Fix escaped newlines in the private key
-    if 'private_key' in creds_dict:
-        creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
-        
-    creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=['https://www.googleapis.com/auth/drive'])
-    req = google.auth.transport.requests.Request()
-    creds.refresh(req)
-    return creds.token
 
 # Create tables and enable vector extension on startup
 @app.on_event("startup")
@@ -519,213 +520,6 @@ class FileInfo(BaseModel):
     filename: str
     contentType: str
 
-class ConfirmUploadRequest(BaseModel):
-    file_ids: List[str]
-
-class SyncDriveRequest(BaseModel):
-    folder_url: str
-
-
-def process_drive_sync(event_id: int, files: list):
-    db: Session = database.SessionLocal()
-    try:
-        logger.info(f"Starting background sync for {len(files)} files.")
-        token = get_drive_token()
-        headers = {"Authorization": f"Bearer {token}"}
-        
-        # Ensure base directories exist
-        storage_path = f"/storage/events/{event_id}/thumbnails"
-        os.makedirs(storage_path, exist_ok=True)
-        
-        batch_size = 10
-        for i in range(0, len(files), batch_size):
-            batch_files = files[i:i + batch_size]
-            new_photos = []
-            
-            for f in batch_files:
-                file_id = f['id']
-                try:
-                    # Download image into memory
-                    dl_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
-                    dl_res = requests.get(dl_url, headers=headers, timeout=30)
-                    
-                    if dl_res.status_code == 401:
-                        logger.info("Google Drive token expired. Refreshing...")
-                        token = get_drive_token()
-                        headers = {"Authorization": f"Bearer {token}"}
-                        dl_res = requests.get(dl_url, headers=headers, timeout=30)
-
-                    if dl_res.status_code != 200:
-                        logger.error(f"Failed to download {file_id}: {dl_res.status_code}")
-                        continue
-                        
-                    img = decode_image_bytes(dl_res.content)
-                    if img is None:
-                        logger.error(f"Failed to decode image {file_id}")
-                        continue
-                        
-                    # Resize for thumbnail
-                    height, width = img.shape[:2]
-                    max_dim = 600
-                    if max(height, width) > max_dim:
-                        scale = max_dim / max(height, width)
-                        img = cv2.resize(img, (int(width * scale), int(height * scale)))
-                        
-                    thumb_filename = f"{file_id}.jpg"
-                    thumb_path = f"{storage_path}/{thumb_filename}"
-                    cv2.imwrite(thumb_path, img)
-                    
-                    photo = models.Photo(
-                        event_id=event_id, 
-                        file_path=f"events/{event_id}/thumbnails/{thumb_filename}",
-                        drive_file_id=file_id,
-                        thumbnail_path=thumb_path
-                    )
-                    db.add(photo)
-                    new_photos.append((photo, thumb_path))
-                except Exception as e:
-                    logger.error(f"Error processing {file_id}: {e}")
-                    continue
-            
-            # Commit the batch to get IDs
-            db.commit()
-            
-            # Queue Celery tasks for all photos in the batch
-            for photo, thumb_path in new_photos:
-                db.refresh(photo)
-                celery_client.send_task("process_photo_task", args=[photo.photo_id, thumb_path])
-                
-    except Exception as e:
-        logger.error(f"Fatal error in background sync: {e}")
-    finally:
-        db.close()
-        logger.info("Background sync completed.")
-
-def repair_missing_photos():
-    """Background task to re-download missing photos that have drive_file_id"""
-    db: Session = database.SessionLocal()
-    try:
-        logger.info("Starting background repair for missing Google Drive photos.")
-        # Find all photos that have a drive_file_id
-        all_drive_photos = db.query(models.Photo).filter(models.Photo.drive_file_id != None).all()
-        
-        missing_photos = []
-        for p in all_drive_photos:
-            # Check if the local file exists (inside /storage)
-            full_path = p.file_path if p.file_path.startswith("/storage") else f"/storage/{p.file_path.lstrip('/')}"
-            if not os.path.exists(full_path):
-                missing_photos.append((p, full_path))
-                
-        if not missing_photos:
-            logger.info("No missing photos found to repair.")
-            return
-
-        logger.info(f"Found {len(missing_photos)} missing photos to recover from Google Drive.")
-        token = get_drive_token()
-        headers = {"Authorization": f"Bearer {token}"}
-        
-        for p, full_path in missing_photos:
-            try:
-                # Ensure directory exists
-                os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                
-                # Download
-                dl_url = f"https://www.googleapis.com/drive/v3/files/{p.drive_file_id}?alt=media"
-                dl_res = requests.get(dl_url, headers=headers, timeout=30)
-                
-                if dl_res.status_code == 401:
-                    logger.info("Google Drive token expired during repair. Refreshing...")
-                    token = get_drive_token()
-                    headers = {"Authorization": f"Bearer {token}"}
-                    dl_res = requests.get(dl_url, headers=headers, timeout=30)
-
-                if dl_res.status_code == 200:
-                    img = decode_image_bytes(dl_res.content)
-                    if img is not None:
-                        # Resize for thumbnail
-                        height, width = img.shape[:2]
-                        max_dim = 600
-                        if max(height, width) > max_dim:
-                            scale = max_dim / max(height, width)
-                            img = cv2.resize(img, (int(width * scale), int(height * scale)))
-                        
-                        # Re-save thumbnail
-                        cv2.imwrite(full_path, img)
-                        logger.info(f"Successfully recovered {p.photo_id} from Drive.")
-                        
-                        # Only re-trigger processing if the status wasn't completed in the backup
-                        if p.processing_status != "completed":
-                            celery_client.send_task("process_photo_task", args=[p.photo_id, full_path])
-                else:
-                    logger.warning(f"Failed to recover {p.photo_id} (ID: {p.drive_file_id}): {dl_res.status_code}")
-            except Exception as e:
-                logger.error(f"Error repairing photo {p.photo_id}: {e}")
-                
-    except Exception as e:
-        logger.error(f"Fatal error in photo repair: {e}")
-    finally:
-        db.close()
-        logger.info("Background repair completed.")
-
-@app.post("/events/{event_id}/sync-drive", dependencies=[Depends(verify_admin)])
-def sync_drive_folder(
-    event_id: int, 
-    payload: SyncDriveRequest, 
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(database.get_db)
-):
-    logger.info(f"Received sync drive request for event {event_id}: {payload.folder_url}")
-    event = db.query(models.Event).filter(models.Event.event_id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    import re
-    folder_id = payload.folder_url
-    match = re.search(r'folders/([a-zA-Z0-9_-]+)', payload.folder_url)
-    if match:
-        folder_id = match.group(1)
-    else:
-        match_id = re.search(r'id=([a-zA-Z0-9_-]+)', payload.folder_url)
-        if match_id:
-            folder_id = match_id.group(1)
-
-    token = get_drive_token()
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    query = f"'{folder_id}' in parents and mimeType contains 'image/' and trashed = false"
-    
-    files = []
-    page_token = None
-    while True:
-        url = f"https://www.googleapis.com/drive/v3/files?q={requests.utils.quote(query)}&fields=nextPageToken,files(id,name,mimeType)&pageSize=1000"
-        if page_token:
-            url += f"&pageToken={page_token}"
-            
-        res = requests.get(url, headers=headers, timeout=30)
-        if res.status_code != 200:
-            raise HTTPException(status_code=400, detail=f"Failed to access Google Drive folder: {res.text}")
-            
-        data = res.json()
-        files.extend(data.get('files', []))
-        page_token = data.get('nextPageToken')
-        if not page_token:
-            break
-            
-    if not files:
-        return {"message": "No images found in the folder.", "synced_count": 0, "total_found": 0, "new_found": 0}
-
-    # Identify new files
-    existing_photos = db.query(models.Photo.drive_file_id).filter(models.Photo.event_id == event_id).all()
-    existing_ids = {p[0] for p in existing_photos if p[0]}
-    new_files = [f for f in files if f['id'] not in existing_ids]
-
-    if not new_files:
-        return {"message": "All images already synced.", "synced_count": 0, "total_found": len(files), "new_found": 0}
-
-    background_tasks.add_task(process_drive_sync, event_id, new_files)
-    
-    return {"message": "Sync started", "synced_count": 0, "total_found": len(files), "new_found": len(new_files)}
-
 @app.get("/photos/{photo_id}/download")
 def download_photo(
     photo_id: int,
@@ -744,30 +538,17 @@ def download_photo(
         else:
             verify_admin(api_key)
 
-        if photo.drive_file_id:
-            token = get_drive_token()
-            headers = {"Authorization": f"Bearer {token}"}
-            dl_url = f"https://www.googleapis.com/drive/v3/files/{photo.drive_file_id}?alt=media"
-
-            res = requests.get(dl_url, headers=headers, stream=True, timeout=30)
-            if res.status_code != 200:
-                raise HTTPException(status_code=res.status_code, detail="Failed to fetch from Google Drive")
-
-            return StreamingResponse(
-                res.iter_content(chunk_size=1024*1024),
-                media_type=res.headers.get("Content-Type", "image/jpeg"),
-                headers={"Content-Disposition": f'attachment; filename="photo_{photo_id}.jpg"'}
+        if photo.file_path:
+            s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
+            bucket_name = os.getenv("S3_BUCKET_NAME")
+            url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': bucket_name, 'Key': photo.file_path, 'ResponseContentDisposition': f'attachment; filename="photo_{photo_id}.jpg"'},
+                ExpiresIn=3600
             )
-        elif photo.file_path:
-            actual_path = resolve_storage_path(photo.file_path)
-            if os.path.exists(actual_path):
-                return FileResponse(
-                    path=actual_path,
-                    media_type="image/jpeg",
-                    filename=f"photo_{photo_id}.jpg"
-                )
-
-        raise HTTPException(status_code=404, detail="File not found on server")
+            return RedirectResponse(url)
+            
+        raise HTTPException(status_code=404, detail="File path not found")
     finally:
         db.close()
 
@@ -809,27 +590,19 @@ def download_photos_zip(
         raise HTTPException(status_code=404, detail="No photos found")
         
     def zip_generator():
-        token = get_drive_token()
-        headers = {"Authorization": f"Bearer {token}"}
+        s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
+        bucket_name = os.getenv("S3_BUCKET_NAME")
         now = datetime.now()
         
         def get_files():
             for photo in photos:
                 filename = f"photo_{photo.photo_id}.jpg"
-                if photo.drive_file_id:
-                    dl_url = f"https://www.googleapis.com/drive/v3/files/{photo.drive_file_id}?alt=media"
-                    # Stream from Google Drive directly into the ZIP chunk
-                    with requests.get(dl_url, headers=headers, stream=True, timeout=30) as res:
-                        if res.status_code == 200:
-                            yield filename, now, 0o600, ZIP_64, res.iter_content(chunk_size=65536)
-                elif photo.file_path:
-                    actual_path = resolve_storage_path(photo.file_path)
-                    if os.path.exists(actual_path):
-                        def file_chunks():
-                            with open(actual_path, "rb") as f:
-                                while chunk := f.read(65536):
-                                    yield chunk
-                        yield filename, now, 0o600, ZIP_64, file_chunks()
+                if photo.file_path:
+                    try:
+                        res = s3_client.get_object(Bucket=bucket_name, Key=photo.file_path)
+                        yield filename, now, 0o600, ZIP_64, res['Body'].iter_chunks(chunk_size=65536)
+                    except Exception as e:
+                        logger.error(f"Error zipping S3 file {photo.file_path}: {e}")
         
         # Stream the zip bytes directly to the client
         yield from stream_zip(get_files())
@@ -854,12 +627,11 @@ def upload_photos(
     if not event:
         logger.error(f"Event {event_id} not found")
         raise HTTPException(status_code=404, detail="Event not found")
-
-    storage_path = f"/storage/events/{event_id}/photos"
-    os.makedirs(storage_path, exist_ok=True)
     
     saved_photos = []
     new_photos = []
+    s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
+    bucket_name = os.getenv("S3_BUCKET_NAME")
     
     try:
         for file in files:
@@ -872,33 +644,22 @@ def upload_photos(
             if looks_like_heic(original_name, file.content_type):
                 safe_filename = f"{os.path.splitext(safe_filename)[0]}.jpg"
 
-            file_location = f"{storage_path}/{uuid.uuid4().hex}_{safe_filename}"
-            relative_path = file_location.replace("/storage/", "", 1) if file_location.startswith("/storage/") else file_location
-            logger.info(f"Saving file to {file_location}")
+            s3_key = f"events/{event_id}/photos/{uuid.uuid4().hex}_{safe_filename}"
+            logger.info(f"Uploading file to S3: {s3_key}")
             
-            # Save to disk
             file.file.seek(0)
             if looks_like_heic(original_name, file.content_type):
                 contents = read_upload_limited(file, MAX_IMAGE_UPLOAD_BYTES)
                 img = decode_image_bytes(contents)
                 if img is None:
                     raise HTTPException(status_code=400, detail="Unsupported HEIC/HEIF image")
-                with open(file_location, "wb+") as buffer:
-                    buffer.write(encode_jpeg_bytes(img))
+                jpeg_bytes = encode_jpeg_bytes(img)
+                s3_client.put_object(Bucket=bucket_name, Key=s3_key, Body=jpeg_bytes, ContentType="image/jpeg")
             else:
-                size = 0
-                with open(file_location, "wb+") as buffer:
-                    while True:
-                        chunk = file.file.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        size += len(chunk)
-                        if size > MAX_IMAGE_UPLOAD_BYTES:
-                            raise HTTPException(status_code=413, detail="Image exceeds 10 MB limit")
-                        buffer.write(chunk)
+                s3_client.upload_fileobj(file.file, bucket_name, s3_key, ExtraArgs={'ContentType': file.content_type})
                 
             # Save to DB
-            new_photo = models.Photo(event_id=event_id, file_path=relative_path)
+            new_photo = models.Photo(event_id=event_id, file_path=s3_key)
             new_photos.append(new_photo)
             
         # Bulk save to DB to significantly speed up waiting time after upload
@@ -908,7 +669,7 @@ def upload_photos(
         for new_photo in new_photos:
             db.refresh(new_photo)
             # Queue for AI Processing (Phase 4)
-            celery_client.send_task("process_photo_task", args=[new_photo.photo_id, resolve_storage_path(new_photo.file_path)])
+            celery_client.send_task("process_photo_task", args=[new_photo.photo_id, new_photo.file_path])
             saved_photos.append(new_photo.photo_id)
             
         logger.info(f"Successfully uploaded {len(saved_photos)} photos.")
@@ -921,6 +682,65 @@ def upload_photos(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
+@app.post("/events/{event_id}/presigned-urls", dependencies=[Depends(verify_admin)])
+def get_presigned_urls(event_id: int, request: PresignedUrlRequest, db: Session = Depends(database.get_db)):
+    """Generates direct-to-S3 upload URLs for massive file bypassing."""
+    event = db.query(models.Event).filter(models.Event.event_id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
+    bucket_name = os.getenv("S3_BUCKET_NAME")
+    
+    urls = []
+    for f in request.files:
+        safe_filename = sanitize_upload_filename(f.filename)
+        if looks_like_heic(f.filename, f.content_type):
+            # Worker will decode the raw HEIC from S3, but we store it originally as .jpg extension for DB consistency
+            safe_filename = f"{os.path.splitext(safe_filename)[0]}.jpg"
+            
+        s3_key = f"events/{event_id}/photos/{uuid.uuid4().hex}_{safe_filename}"
+        
+        try:
+            presigned_url = s3_client.generate_presigned_url(
+                'put_object',
+                Params={
+                    'Bucket': bucket_name,
+                    'Key': s3_key,
+                    'ContentType': f.content_type
+                },
+                ExpiresIn=3600 # URL valid for 1 hour
+            )
+            urls.append({"filename": f.filename, "s3_key": s3_key, "url": presigned_url})
+        except Exception as e:
+            logger.error(f"Failed to generate presigned URL for {f.filename}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to generate upload URLs")
+            
+    return {"urls": urls}
+
+@app.post("/events/{event_id}/confirm-uploads", dependencies=[Depends(verify_admin)])
+def confirm_uploads(event_id: int, request: ConfirmUploadRequest, db: Session = Depends(database.get_db)):
+    """Saves DB records and triggers AI workers after successful frontend S3 upload."""
+    event = db.query(models.Event).filter(models.Event.event_id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+        
+    new_photos = []
+    for s3_key in request.s3_keys:
+        new_photo = models.Photo(event_id=event_id, file_path=s3_key)
+        new_photos.append(new_photo)
+        
+    db.add_all(new_photos)
+    db.commit()
+    
+    saved_photos = []
+    for new_photo in new_photos:
+        db.refresh(new_photo)
+        celery_client.send_task("process_photo_task", args=[new_photo.photo_id, new_photo.file_path])
+        saved_photos.append(new_photo.photo_id)
+        
+    return {"message": "Uploads confirmed and queued for processing", "photo_ids": saved_photos}
+
 @app.get("/events/{event_id}/photos", response_model=List[schemas.Photo], dependencies=[Depends(verify_admin)])
 def get_event_photos(event_id: int, db: Session = Depends(database.get_db)):
     photos = db.query(models.Photo).filter(models.Photo.event_id == event_id).all()
@@ -932,27 +752,15 @@ def delete_photo(photo_id: int, db: Session = Depends(database.get_db)):
     if not photo:
         raise HTTPException(status_code=404, detail="Photo not found")
     try:
-        # Delete from local storage if exists
         if photo.file_path:
-            actual_file_path = resolve_storage_path(photo.file_path)
-            if os.path.exists(actual_file_path):
-                os.remove(actual_file_path)
-                logger.info(f"Deleted local file: {actual_file_path}")
+            s3_client = boto3.client('s3', config=Config(signature_version='s3v4'))
+            s3_client.delete_object(Bucket=os.getenv("S3_BUCKET_NAME"), Key=photo.file_path)
             
         if photo.thumbnail_path:
             actual_thumbnail_path = resolve_storage_path(photo.thumbnail_path)
             if os.path.exists(actual_thumbnail_path):
                 os.remove(actual_thumbnail_path)
                 logger.info(f"Deleted local thumbnail: {actual_thumbnail_path}")
-
-        # Delete from Google Drive if it was a drive file
-        if photo.drive_file_id:
-            token = get_drive_token()
-            requests.delete(
-                f'https://www.googleapis.com/drive/v3/files/{photo.drive_file_id}',
-                headers={'Authorization': f'Bearer {token}'},
-                timeout=30,
-            )
     except Exception as e:
         logger.error(f"Error deleting files for photo {photo_id}: {e}")
         
@@ -1222,10 +1030,7 @@ async def import_database(
         db.execute(text("SELECT setval('faces_face_id_seq', COALESCE((SELECT MAX(face_id) FROM faces), 0) + 1, false)"))
         db.commit()
 
-        # Auto-trigger repair background task
-        background_tasks.add_task(repair_missing_photos)
-
-        msg = f"Imported {events_count} events, {photos_count} photos, {faces_count} faces. Background recovery started for missing files."
+        msg = f"Imported {events_count} events, {photos_count} photos, {faces_count} faces."
         logger.info(msg)
         return ImportResult(
             events_imported=events_count,

@@ -5,7 +5,11 @@ from sqlalchemy.orm import sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL environment variable is not set")
+    user = os.getenv("DB_USERNAME")
+    password = os.getenv("DB_PASSWORD")
+    host = os.getenv("DB_HOST")
+    db_name = os.getenv("DB_NAME")
+    DATABASE_URL = f"postgresql://{user}:{password}@{host}:5432/{db_name}"
 
 def get_int_env(name: str, default: int) -> int:
     value = os.getenv(name)

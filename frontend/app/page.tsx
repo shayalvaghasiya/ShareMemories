@@ -287,10 +287,6 @@ export default function Home({ initialEventCode }: HomeProps = {}) {
     }
   };
 
-  // Helper to resolve backend drive ID to Google Drive URL
-  const getDriveThumbUrl = (id: string) => `https://drive.google.com/thumbnail?id=&sz=w600`;
-  const getDriveFullUrl = (id: string) => `https://drive.google.com/uc?id=`;
-
   return (
     <main className="min-h-screen bg-slate-50 text-slate-800 font-sans">
       {/* Hero Header */}
